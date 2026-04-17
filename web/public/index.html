@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login Staff</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <h1>Panel de Tiradas</h1>
+    <p>Acceso staff</p>
+    <form method="POST" action="/login" class="login-form">
+      <input type="text" name="username" placeholder="Usuario" required />
+      <input type="password" name="password" placeholder="Contraseña" required />
+      <button type="submit">Entrar</button>
+    </form>
+  </div>
+</body>
+</html>
