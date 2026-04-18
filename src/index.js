@@ -293,4 +293,13 @@ process.on("uncaughtException", error => {
   console.error("Uncaught Exception:", error);
 });
 
-client.login(process.env.DISCORD_TOKEN);
+const token = process.env.DISCORD_TOKEN?.trim();
+
+console.log("DISCORD_TOKEN existe:", Boolean(token));
+console.log("Longitud token:", token?.length ?? 0);
+
+if (!token) {
+  throw new Error("Falta DISCORD_TOKEN en las variables de entorno");
+}
+
+client.login(token);
