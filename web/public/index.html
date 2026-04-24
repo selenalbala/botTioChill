@@ -3,18 +3,102 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login Staff</title>
+  <title>Panel de Tiradas</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body class="login-body">
-  <div class="login-card">
-    <h1>Panel de Tiradas</h1>
-    <p>Acceso staff</p>
-    <form method="POST" action="/login" class="login-form">
-      <input type="text" name="username" placeholder="Usuario" required />
-      <input type="password" name="password" placeholder="Contraseña" required />
-      <button type="submit">Entrar</button>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Panel de Tiradas</h1>
+      <p>Control de tiradas registradas</p>
+    </div>
+
+    <form method="POST" action="/logout">
+      <button type="submit" class="logout-btn">Cerrar sesión</button>
     </form>
-  </div>
+  </header>
+
+  <main class="container">
+    <section class="stats-grid">
+      <div class="stat-card">
+        <h3>Total general</h3>
+        <p id="statTotal">0</p>
+      </div>
+
+      <div class="stat-card">
+        <h3>Usuarios</h3>
+        <p id="statUsers">0</p>
+      </div>
+
+      <div class="stat-card">
+        <h3>Hoy</h3>
+        <p id="statHoy">0</p>
+      </div>
+
+      <div class="stat-card">
+        <h3>Este mes</h3>
+        <p id="statMes">0</p>
+      </div>
+    </section>
+
+    <section class="panel-grid">
+      <div class="card">
+        <h2>Filtros</h2>
+
+        <div class="filters">
+          <select id="user_id">
+            <option value="">Todos los usuarios</option>
+          </select>
+
+          <input id="anio" type="number" placeholder="Año" />
+          <input id="mes" type="number" placeholder="Mes" min="1" max="12" />
+          <input id="semana" type="number" placeholder="Semana ISO" />
+          <input id="desde" type="date" />
+          <input id="hasta" type="date" />
+
+          <div class="filter-actions">
+            <button id="applyFilters" type="button">Aplicar filtros</button>
+            <button id="clearFilters" type="button" class="secondary">Limpiar</button>
+            <button id="exportExcel" type="button">Exportar Excel</button>
+            <button id="downloadDb" type="button" class="secondary">Descargar DB</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Top usuarios</h2>
+        <div id="topUsers" class="top-list"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="table-header">
+        <h2>Registros</h2>
+        <span id="tableTotal">0 tiradas</span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Fecha</th>
+              <th>Nombre</th>
+              <th>Usuario</th>
+              <th>ID Usuario</th>
+              <th>Año</th>
+              <th>Mes</th>
+              <th>Semana</th>
+              <th>Canal</th>
+              <th>Conteo</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>
