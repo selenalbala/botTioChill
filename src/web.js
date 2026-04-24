@@ -22,17 +22,20 @@ function createWebApp() {
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
 
-  app.use(session({
-    secret: process.env.SESSION_SECRET || "cambia-esto",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production"
-    }
-  }));
+app.set("trust proxy", 1);
 
+app.use(session({
+  secret: process.env.SESSION_SECRET || "cambia-esto",
+  resave: false,
+  saveUninitialized: false,
+  proxy: true,
+  cookie: {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: "auto",
+    maxAge: 1000 * 60 * 60 * 8
+  }
+}));
   const publicDir = path.join(__dirname, "..", "web", "public");
   app.use("/static", express.static(publicDir));
 
