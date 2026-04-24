@@ -48,21 +48,45 @@ app.use(session({
     res.sendFile(path.join(publicDir, "login.html"));
   });
 
-  app.post("/login", (req, res) => {
-    const username = String(req.body.username || "").trim();
-    const password = String(req.body.password || "");
+app.post("/login", (req, res) => {
+  const username = String(req.body.username || "").trim();
+  const password = String(req.body.password || "").trim();
 
-    const validUser = username === (process.env.WEB_USERNAME || "staff");
-    const validPass = password === process.env.WEB_PASSWORD;
+  const expectedUsername = String(process.env.WEB_USERNAME || "staff").trim();
+  const expectedPassword = String(process.env.WEB_PASSWORD || "").trim();
 
-    if (!validUser || !validPass) {
-      return res.redirect("/login?error=1");
+  if (!expectedPassword) {
+    console.error("WEB_PASSWORD no está configurada en Railway.");
+    return res.status(500).send("WEB_PASSWORD no está configurada en Railway.");
+  }
+
+  const validUser = username === expectedUsername;
+  const validPass = password === expectedPassword;
+
+  if (!validUser || !validPass) {
+    console.log("Login incorrecto:", {
+      usernameRecibido: username,
+      usernameEsperado: expectedUsername,
+      passwordConfigurada: Boolean(expectedPassword),
+      longitudPasswordRecibida: password.length,
+      longitudPasswordEsperada: expectedPassword.length
+    });
+
+    return res.redirect("/login?error=1");
+  }
+
+  req.session.authenticated = true;
+  req.session.username = username;
+
+  req.session.save(error => {
+    if (error) {
+      console.error("Error guardando sesión:", error);
+      return res.status(500).send("Error guardando la sesión.");
     }
 
-    req.session.authenticated = true;
-    req.session.username = username;
     return res.redirect("/");
   });
+});
 
   app.post("/logout", (req, res) => {
     req.session.destroy(() => {
