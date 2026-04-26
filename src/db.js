@@ -552,6 +552,119 @@ function getDbPath() {
   return DB_PATH;
 }
 
+function getPendingProcessedMeta(channelId) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN meta_total > meta_empaquetada THEN meta_total - meta_empaquetada
+        ELSE 0
+      END
+    ), 0) AS total
+    FROM procesos
+    WHERE channel_id = ?
+  `).get(channelId);
+
+  return Number(row.total || 0);
+}
+
+function getPendingProcessedByProcess(channelId) {
+  return db.prepare(`
+    SELECT
+      id,
+      timestamp_utc,
+      fecha_local,
+      processor_user_id,
+      processor_username,
+      processor_display_name,
+      meta_total,
+      meta_empaquetada,
+      meta_total - meta_empaquetada AS meta_pendiente
+    FROM procesos
+    WHERE channel_id = ?
+      AND meta_total > meta_empaquetada
+    ORDER BY id ASC
+  `).all(channelId);
+}
+
+const packagePendingMetaTransaction = db.transaction(({
+  channelId,
+  metaAempaquetar,
+  timestampUtc,
+  fechaLocal,
+  guildId,
+  packerUserId,
+  packerUsername,
+  packerDisplayName
+}) => {
+  let remaining = Number(metaAempaquetar);
+
+  const rows = db.prepare(`
+    SELECT
+      id,
+      meta_total,
+      meta_empaquetada,
+      meta_total - meta_empaquetada AS pendiente
+    FROM procesos
+    WHERE channel_id = ?
+      AND meta_total > meta_empaquetada
+    ORDER BY id ASC
+  `).all(channelId);
+
+  for (const row of rows) {
+    if (remaining <= 0) break;
+
+    const take = Math.min(Number(row.pendiente), remaining);
+    const nuevoEmpaquetado = Number(row.meta_empaquetada) + take;
+
+    db.prepare(`
+      UPDATE procesos
+      SET meta_empaquetada = ?
+      WHERE id = ?
+    `).run(nuevoEmpaquetado, row.id);
+
+    remaining -= take;
+  }
+
+  if (remaining > 0) {
+    throw new Error("No hay suficiente meta procesada pendiente para empaquetar.");
+  }
+
+  return db.prepare(`
+    INSERT INTO empaquetados (
+      timestamp_utc,
+      fecha_local,
+      guild_id,
+      channel_id,
+      packer_user_id,
+      packer_username,
+      packer_display_name,
+      meta_empaquetada
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    timestampUtc,
+    fechaLocal,
+    guildId,
+    channelId,
+    packerUserId,
+    packerUsername,
+    packerDisplayName,
+    metaAempaquetar
+  );
+});
+
+function packagePendingMeta(data) {
+  return packagePendingMetaTransaction(data);
+}
+
+function getEmpaquetados(limit = 50) {
+  return db.prepare(`
+    SELECT *
+    FROM empaquetados
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(limit);
+}
+
 module.exports = {
   db,
   initDb,
@@ -579,6 +692,10 @@ module.exports = {
   getPendingTiradasByUser,
   processPendingTiradas,
   getProcesos,
+  getPendingProcessedMeta,
+  getPendingProcessedByProcess,
+  packagePendingMeta,
+  getEmpaquetados,
   hasReportBeenSent,
   markReportSent,
   backupDatabase,
