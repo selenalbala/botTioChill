@@ -17,17 +17,21 @@ const {
   getPendingTiradasCount,
   getPendingMetaTotal,
   getPendingTiradasByUser,
+  getPendingProcessedMeta,
   getProcesos,
+  getEmpaquetados,
   backupDatabase,
   getDbPath
 } = require("./db");
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const TIMEZONE = process.env.TIMEZONE || "Europe/Madrid";
+
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const META_POR_TIRADA = 56;
 const META_MAXIMA_PROCESO = 448;
 const TIRADAS_PARA_PROCESAR = META_MAXIMA_PROCESO / META_POR_TIRADA;
+const META_PARA_EMPAQUETAR = 448;
 
 function getIsoWeekFromParts(year, month, day) {
   const d = new Date(Date.UTC(year, month - 1, day));
@@ -183,36 +187,44 @@ function createWebApp() {
     res.sendFile(path.join(publicDir, "index.html"));
   });
 
-app.get("/api/dashboard", requireApiAuth, (req, res) => {
-  const stats = getDashboardStats();
-  const top = getTopUsers(10);
-  const users = getDistinctUsers();
+  app.get("/api/dashboard", requireApiAuth, (req, res) => {
+    const stats = getDashboardStats();
+    const top = getTopUsers(10);
+    const users = getDistinctUsers();
 
-  const tiradasPendientes = getPendingTiradasCount(TARGET_CHANNEL_ID);
-  const metaActual = getPendingMetaTotal(TARGET_CHANNEL_ID, META_POR_TIRADA);
-  const metaRestante = Math.max(META_MAXIMA_PROCESO - metaActual, 0);
-  const tiradasRestantes = Math.max(TIRADAS_PARA_PROCESAR - tiradasPendientes, 0);
+    const tiradasPendientes = getPendingTiradasCount(TARGET_CHANNEL_ID);
+    const metaActual = getPendingMetaTotal(TARGET_CHANNEL_ID, META_POR_TIRADA);
+    const metaRestante = Math.max(META_MAXIMA_PROCESO - metaActual, 0);
+    const tiradasRestantes = Math.max(TIRADAS_PARA_PROCESAR - tiradasPendientes, 0);
 
-  res.json({
-    ok: true,
-    stats,
-    top,
-    users,
-    dbPath: getDbPath(),
-    meta: {
-      metaPorTirada: META_POR_TIRADA,
-      metaMaximaProceso: META_MAXIMA_PROCESO,
-      tiradasParaProcesar: TIRADAS_PARA_PROCESAR,
-      tiradasPendientes,
-      metaActual,
-      metaRestante,
-      tiradasRestantes,
-      listoParaProcesar: metaActual >= META_MAXIMA_PROCESO,
-      porUsuarios: getPendingTiradasByUser(TARGET_CHANNEL_ID),
-      ultimosProcesos: getProcesos(5)
-    }
+    const metaProcesadaPendiente = getPendingProcessedMeta(TARGET_CHANNEL_ID);
+    const metaProcesadaRestante = Math.max(META_PARA_EMPAQUETAR - metaProcesadaPendiente, 0);
+
+    res.json({
+      ok: true,
+      stats,
+      top,
+      users,
+      dbPath: getDbPath(),
+      meta: {
+        metaPorTirada: META_POR_TIRADA,
+        metaMaximaProceso: META_MAXIMA_PROCESO,
+        tiradasParaProcesar: TIRADAS_PARA_PROCESAR,
+        tiradasPendientes,
+        metaActual,
+        metaRestante,
+        tiradasRestantes,
+        listoParaProcesar: metaActual >= META_MAXIMA_PROCESO,
+        porUsuarios: getPendingTiradasByUser(TARGET_CHANNEL_ID),
+        metaParaEmpaquetar: META_PARA_EMPAQUETAR,
+        metaProcesadaPendiente,
+        metaProcesadaRestante,
+        listoParaEmpaquetar: metaProcesadaPendiente >= META_PARA_EMPAQUETAR,
+        ultimosProcesos: getProcesos(5),
+        ultimosEmpaquetados: getEmpaquetados(5)
+      }
+    });
   });
-});
 
   app.get("/api/tiradas", requireApiAuth, (req, res) => {
     const rows = getFilteredTiradas({
