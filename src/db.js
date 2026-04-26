@@ -393,18 +393,12 @@ function getFilteredTiradas(filters = {}) {
 
 function getPendingTiradasCount(channelId) {
   const row = db.prepare(`
-    SELECT COALESCE(SUM(
-      CASE
-        WHEN conteo > conteo_procesado THEN conteo - conteo_procesado
-        ELSE 0
-      END
-    ), 0) AS total
+    SELECT COALESCE(SUM(conteo - conteo_procesado), 0) AS total
     FROM tiradas
     WHERE channel_id = ?
-      AND conteo > 0
   `).get(channelId);
 
-  return Number(row.total || 0);
+  return Math.max(0, Number(row.total || 0));
 }
 
 function getPendingMetaTotal(channelId, metaPorTirada = 56) {
@@ -417,15 +411,9 @@ function getPendingTiradasByUser(channelId) {
       user_id,
       MAX(display_name) AS display_name,
       MAX(username) AS username,
-      COALESCE(SUM(
-        CASE
-          WHEN conteo > conteo_procesado THEN conteo - conteo_procesado
-          ELSE 0
-        END
-      ), 0) AS tiradas_pendientes
+      COALESCE(SUM(conteo - conteo_procesado), 0) AS tiradas_pendientes
     FROM tiradas
     WHERE channel_id = ?
-      AND conteo > 0
     GROUP BY user_id
     HAVING tiradas_pendientes > 0
     ORDER BY tiradas_pendientes DESC, display_name ASC
