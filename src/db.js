@@ -46,6 +46,20 @@ function initDb() {
       conteo INTEGER NOT NULL DEFAULT 1
     );
 
+    CREATE TABLE IF NOT EXISTS empaquetados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp_utc TEXT NOT NULL,
+      fecha_local TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      packer_user_id TEXT NOT NULL,
+      packer_username TEXT NOT NULL,
+      packer_display_name TEXT NOT NULL,
+      meta_empaquetada INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_empaquetados_channel_id ON empaquetados(channel_id);
+
     CREATE TABLE IF NOT EXISTS procesos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp_utc TEXT NOT NULL,
@@ -81,6 +95,13 @@ function initDb() {
     `);
   }
 }
+
+  if (!columnExists("procesos", "meta_empaquetada")) {
+    db.exec(`
+      ALTER TABLE procesos
+      ADD COLUMN meta_empaquetada INTEGER NOT NULL DEFAULT 0
+    `);
+  }
 
 initDb();
 
