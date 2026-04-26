@@ -1,5 +1,14 @@
 let usersCache = [];
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function setStatus(message, type = "") {
   const el = document.getElementById("statusMessage");
   el.textContent = message || "";
@@ -112,10 +121,10 @@ async function loadDashboard() {
     div.innerHTML = `
       <div class="top-rank">${index + 1}</div>
       <div>
-        <div class="top-name">${user.display_name || user.username}</div>
-        <div class="top-user">${user.username || user.user_id}</div>
+        <div class="top-name">${escapeHtml(user.display_name || user.username)}</div>
+        <div class="top-user">${escapeHtml(user.username || user.user_id)}</div>
       </div>
-      <div class="top-total">${user.total}</div>
+      <div class="top-total">${escapeHtml(user.total)}</div>
     `;
     top.appendChild(div);
   });
@@ -151,16 +160,17 @@ async function loadTable() {
   for (const row of data.rows) {
     const tr = document.createElement("tr");
 
-    const canal = row.channel_id === "panel-web-ajuste"
+    const isAdjustment = row.channel_id === "panel-web-ajuste";
+    const canal = isAdjustment
       ? `<span class="channel-adjust">Ajuste manual</span>`
-      : row.channel_id;
+      : escapeHtml(row.channel_id);
 
     tr.innerHTML = `
-      <td>${row.fecha_local}</td>
-      <td>${row.display_name}</td>
-      <td>${row.username}</td>
+      <td>${escapeHtml(row.fecha_local)}</td>
+      <td>${escapeHtml(row.display_name)}</td>
+      <td>${escapeHtml(row.username)}</td>
       <td>${canal}</td>
-      <td><strong>${row.conteo}</strong></td>
+      <td><strong>${escapeHtml(row.conteo)}</strong></td>
     `;
 
     tbody.appendChild(tr);
