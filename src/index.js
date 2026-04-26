@@ -61,6 +61,7 @@ const TIRADA_COOLDOWN_MS = 70 * 60 * 1000;
 const META_POR_TIRADA = 56;
 const META_MAXIMA_PROCESO = 448;
 const TIRADAS_PARA_PROCESAR = META_MAXIMA_PROCESO / META_POR_TIRADA;
+const META_PARA_EMPAQUETAR = 448;
 
 function getLocalDateText(date = new Date(), timeZone = TIMEZONE) {
   const formatter = new Intl.DateTimeFormat("sv-SE", {
@@ -119,6 +120,18 @@ function buildProcessStatusText(channelId = TARGET_CHANNEL_ID) {
   ].join("\n");
 }
 
+function buildPackagingStatusText(channelId = TARGET_CHANNEL_ID) {
+  const metaProcesadaPendiente = getPendingProcessedMeta(channelId);
+  const faltan = Math.max(META_PARA_EMPAQUETAR - metaProcesadaPendiente, 0);
+
+  return [
+    `Meta procesada pendiente de empaquetar: **${metaProcesadaPendiente}/${META_PARA_EMPAQUETAR}**`,
+    metaProcesadaPendiente >= META_PARA_EMPAQUETAR
+      ? "Estado: **listo para empaquetar**."
+      : `Faltan **${faltan}** de meta procesada para poder empaquetar.`
+  ].join("\n");
+}
+
 function buildUserPendingText(channelId = TARGET_CHANNEL_ID) {
   const rows = getPendingTiradasByUser(channelId);
 
@@ -153,18 +166,29 @@ async function replySafe(interaction, payload) {
   return interaction.reply(payload);
 }
 
-function buildPanelRow() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("tirada_plus_one")
-      .setLabel("+1 tirada")
-      .setStyle(ButtonStyle.Primary),
+function buildPanelRows() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("tirada_plus_one")
+        .setLabel("+1 tirada")
+        .setStyle(ButtonStyle.Primary)
+    ),
 
-    new ButtonBuilder()
-      .setCustomId("procesar_meta")
-      .setLabel("Procesar")
-      .setStyle(ButtonStyle.Success)
-  );
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("procesar_meta")
+        .setLabel("Procesar")
+        .setStyle(ButtonStyle.Success)
+    ),
+
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("empaquetar_meta")
+        .setLabel("Empaquetar")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  ];
 }
 
 async function sendPanelIfMissing(guild) {
@@ -183,8 +207,9 @@ async function sendPanelIfMissing(guild) {
       msg.components.length > 0 &&
       msg.components[0].components.some(
         component =>
-          component.customId === "tirada_plus_one" ||
-          component.customId === "procesar_meta"
+                    component.customId === "tirada_plus_one" ||
+                    component.customId === "procesar_meta" ||
+                    component.customId === "empaquetar_meta"
       )
   );
 
@@ -194,14 +219,16 @@ async function sendPanelIfMissing(guild) {
   }
 
   await channel.send({
-    content: [
-      "Pulsa **+1 tirada** para sumar 56 de metanfetamina.",
-      "",
-      `Objetivo para procesar: **${META_MAXIMA_PROCESO}**`,
-      `Cada tirada: **${META_POR_TIRADA}**`,
-      `Tiradas necesarias: **${TIRADAS_PARA_PROCESAR}**`
-    ].join("\n"),
-    components: [buildPanelRow()]
+content: [
+  "Pulsa **+1 tirada** para sumar 56 de metanfetamina.",
+  "",
+  `Objetivo para procesar: **${META_MAXIMA_PROCESO}**`,
+  `Cada tirada: **${META_POR_TIRADA}**`,
+  `Tiradas necesarias: **${TIRADAS_PARA_PROCESAR}**`,
+  "",
+  "Después de procesar, pulsa **Empaquetar** para registrar el empaquetado."
+].join("\n"),
+components: buildPanelRows()
   });
 
   console.log("Panel de tiradas enviado automáticamente.");
@@ -314,17 +341,72 @@ async function handleProcesarButton(interaction) {
       interaction.user.username
   });
 
+await interaction.editReply({
+  content: [
+    "Proceso registrado correctamente.",
+    "",
+    `Se han procesado **${META_MAXIMA_PROCESO}** de metanfetamina.`,
+    `Se han consumido **${TIRADAS_PARA_PROCESAR}** tiradas pendientes.`,
+    "",
+    "**Reparto de tiradas usadas:**",
+    buildUserPendingText(TARGET_CHANNEL_ID),
+    "",
+    buildPackagingStatusText(TARGET_CHANNEL_ID),
+    "",
+    "Ahora se puede pulsar **Empaquetar** si hay suficiente meta procesada."
+  ].join("\n")
+});
+}
+
+async function handleEmpaquetarButton(interaction) {
+  if (interaction.channelId !== TARGET_CHANNEL_ID) {
+    await interaction.reply({
+      content: "Este botón no corresponde a este canal.",
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  const metaProcesadaPendiente = getPendingProcessedMeta(TARGET_CHANNEL_ID);
+
+  if (metaProcesadaPendiente < META_PARA_EMPAQUETAR) {
+    await interaction.reply({
+      content: [
+        "Todavía no se puede empaquetar.",
+        "",
+        buildPackagingStatusText(TARGET_CHANNEL_ID)
+      ].join("\n"),
+      flags: MessageFlags.Ephemeral
+    });
+
+    return;
+  }
+
+  await interaction.deferReply({
+    flags: MessageFlags.Ephemeral
+  });
+
+  packagePendingMeta({
+    channelId: TARGET_CHANNEL_ID,
+    metaAempaquetar: META_PARA_EMPAQUETAR,
+    timestampUtc: new Date().toISOString(),
+    fechaLocal: getLocalDateText(new Date(), TIMEZONE),
+    guildId: interaction.guildId,
+    packerUserId: interaction.user.id,
+    packerUsername: interaction.user.username,
+    packerDisplayName:
+      interaction.member?.displayName ||
+      interaction.user.globalName ||
+      interaction.user.username
+  });
+
   await interaction.editReply({
     content: [
-      "Proceso registrado correctamente.",
+      "Empaquetado registrado correctamente.",
       "",
-      `Se han procesado **${META_MAXIMA_PROCESO}** de metanfetamina.`,
-      `Se han consumido **${TIRADAS_PARA_PROCESAR}** tiradas pendientes.`,
+      `Se han empaquetado **${META_PARA_EMPAQUETAR}** de metanfetamina.`,
       "",
-      "**Reparto de tiradas usadas:**",
-      buildUserPendingText(TARGET_CHANNEL_ID),
-      "",
-      "El contador pendiente vuelve a empezar para el siguiente procesado."
+      buildPackagingStatusText(TARGET_CHANNEL_ID)
     ].join("\n")
   });
 }
@@ -520,6 +602,11 @@ client.on(Events.InteractionCreate, async interaction => {
         await handleProcesarButton(interaction);
         return;
       }
+
+      if (interaction.customId === "empaquetar_meta") {
+  await handleEmpaquetarButton(interaction);
+  return;
+}
     }
   } catch (error) {
     console.error("Error en interacción:", error);
