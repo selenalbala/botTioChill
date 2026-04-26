@@ -30,7 +30,9 @@ const {
   getPendingTiradasCount,
   getPendingMetaTotal,
   getPendingTiradasByUser,
-  processPendingTiradas
+  processPendingTiradas,
+  getPendingProcessedMeta,
+  packagePendingMeta
 } = require("./db");
 
 const { buildTiradaRow, sumRegistros } = require("./stats");
