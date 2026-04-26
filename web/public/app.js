@@ -99,7 +99,8 @@ async function loadDashboard() {
   document.getElementById("statUsers").textContent = data.stats.usuarios;
   document.getElementById("statHoy").textContent = data.stats.hoy;
   document.getElementById("statMes").textContent = data.stats.mes;
-
+  renderMeta(data.meta);
+  
   usersCache = data.users || [];
 
   fillUserSelect("quickUser", "Selecciona usuario");
@@ -128,6 +129,56 @@ async function loadDashboard() {
     `;
     top.appendChild(div);
   });
+}
+
+function renderMeta(meta) {
+  if (!meta) return;
+
+  const porcentaje = Math.min(
+    Math.round((Number(meta.metaActual || 0) / Number(meta.metaMaximaProceso || 448)) * 100),
+    100
+  );
+
+  document.getElementById("metaActual").textContent = meta.metaActual;
+  document.getElementById("metaObjetivo").textContent = `de ${meta.metaMaximaProceso} necesarios`;
+  document.getElementById("tiradasPendientes").textContent = meta.tiradasPendientes;
+  document.getElementById("tiradasNecesarias").textContent = meta.tiradasParaProcesar;
+  document.getElementById("metaRestante").textContent = meta.metaRestante;
+
+  const estado = document.getElementById("metaEstado");
+  estado.textContent = meta.listoParaProcesar ? "Listo para procesar" : "En progreso";
+  estado.className = meta.listoParaProcesar ? "badge badge-ok" : "badge";
+
+  const progressBar = document.getElementById("metaProgressBar");
+  progressBar.style.width = `${porcentaje}%`;
+
+  const usersBox = document.getElementById("metaUsers");
+  usersBox.innerHTML = "";
+
+  if (!meta.porUsuarios || !meta.porUsuarios.length) {
+    usersBox.innerHTML = `<div class="empty-box">No hay tiradas pendientes para procesar.</div>`;
+    return;
+  }
+
+  for (const user of meta.porUsuarios) {
+    const tiradas = Number(user.tiradas_pendientes || 0);
+    const metaUsuario = tiradas * Number(meta.metaPorTirada || 56);
+
+    const div = document.createElement("div");
+    div.className = "meta-user-item";
+    div.innerHTML = `
+      <div>
+        <strong>${escapeHtml(user.display_name || user.username)}</strong>
+        <span>${escapeHtml(user.username || user.user_id)}</span>
+      </div>
+      <div>
+        <strong>${tiradas}</strong>
+        <span>${metaUsuario} meta</span>
+      </div>
+    `;
+
+    usersBox.appendChild(div);
+  }
 }
 
 function getFilters() {
