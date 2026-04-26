@@ -9,209 +9,144 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <div class="brand-mark">🏍</div>
+      <div class="brand-icon">🏍</div>
       <div>
-        <span class="eyebrow">TÍO CHILL MC · STAFF</span>
+        <p class="mini-title">TÍO CHILL MC · STAFF</p>
         <h1>Panel de Tiradas</h1>
-        <p>Control de actividad, abusos y ajustes manuales</p>
+        <span>Control rápido de miembros y abusos</span>
       </div>
     </div>
 
-    <div class="topbar-actions">
-      <button id="reloadAll" type="button" class="secondary">Recargar panel</button>
-      <form method="POST" action="/logout">
-        <button type="submit" class="logout-btn">Cerrar sesión</button>
-      </form>
-    </div>
+    <form method="POST" action="/logout">
+      <button type="submit" class="btn-secondary">Cerrar sesión</button>
+    </form>
   </header>
 
   <main class="container">
-    <section class="hero card">
-      <div class="hero-copy">
-        <span class="section-kicker">Centro de control</span>
-        <h2>Gestiona las tiradas sin perder tiempo</h2>
-        <p class="help-text">
-          Filtra por usuario o fecha, detecta abuso rápido y corrige registros desde la misma tabla.
-        </p>
-      </div>
-
-      <div class="hero-actions">
-        <button id="focusFilters" type="button">Ir a filtros</button>
-        <button id="focusCorrection" type="button" class="secondary">Ir a corrección rápida</button>
-      </div>
-    </section>
-
     <section class="stats-grid">
       <div class="stat-card">
-        <h3>Total general</h3>
-        <p id="statTotal">0</p>
-        <span class="stat-foot">Tiradas registradas</span>
+        <span>Total general</span>
+        <strong id="statTotal">0</strong>
       </div>
 
       <div class="stat-card">
-        <h3>Usuarios</h3>
-        <p id="statUsers">0</p>
-        <span class="stat-foot">Miembros con actividad</span>
+        <span>Usuarios</span>
+        <strong id="statUsers">0</strong>
       </div>
 
       <div class="stat-card">
-        <h3>Hoy</h3>
-        <p id="statHoy">0</p>
-        <span class="stat-foot">Movimientos de hoy</span>
+        <span>Hoy</span>
+        <strong id="statHoy">0</strong>
       </div>
 
-      <div class="stat-card accent-card">
-        <h3>Este mes</h3>
-        <p id="statMes">0</p>
-        <span class="stat-foot">Actividad del mes actual</span>
+      <div class="stat-card">
+        <span>Este mes</span>
+        <strong id="statMes">0</strong>
       </div>
     </section>
 
-    <section class="panel-grid main-grid">
-      <div class="card" id="filtersCard">
-        <div class="section-head">
+    <section class="main-grid">
+      <div class="card main-card">
+        <div class="card-title">
           <div>
-            <span class="section-kicker">Búsqueda</span>
-            <h2>Filtros</h2>
+            <p class="mini-title">ANTIABUSO</p>
+            <h2>Modificar tiradas</h2>
           </div>
-          <span class="panel-pill">Rápido</span>
+          <span class="badge">Control staff</span>
         </div>
 
-        <p class="help-text">Localiza tiradas sospechosas por usuario, periodo o rango de fechas.</p>
+        <p class="help">
+          Selecciona un usuario y cambia sus tiradas de forma rápida.
+        </p>
 
-        <div class="preset-row">
-          <button id="presetToday" type="button" class="secondary small">Hoy</button>
-          <button id="presetWeek" type="button" class="secondary small">Esta semana</button>
-          <button id="presetMonth" type="button" class="secondary small">Este mes</button>
-          <button id="clearFilters" type="button" class="secondary small">Limpiar filtros</button>
-        </div>
-
-        <div class="filters">
-          <label class="field">
-            <span>Usuario</span>
-            <select id="user_id">
-              <option value="">Todos los usuarios</option>
+        <div class="edit-panel">
+          <label>
+            Usuario
+            <select id="quickUser">
+              <option value="">Selecciona usuario</option>
             </select>
           </label>
 
-          <label class="field">
-            <span>Año</span>
-            <input id="anio" type="number" placeholder="Ej. 2026" />
-          </label>
-
-          <label class="field">
-            <span>Mes</span>
-            <input id="mes" type="number" placeholder="1-12" min="1" max="12" />
-          </label>
-
-          <label class="field">
-            <span>Semana ISO</span>
-            <input id="semana" type="number" placeholder="Ej. 17" />
-          </label>
-
-          <label class="field">
-            <span>Desde</span>
-            <input id="desde" type="date" />
-          </label>
-
-          <label class="field">
-            <span>Hasta</span>
-            <input id="hasta" type="date" />
-          </label>
-
-          <div class="filter-actions">
-            <button id="applyFilters" type="button">Aplicar filtros</button>
-            <button id="exportExcel" type="button" class="secondary">Exportar Excel</button>
-            <button id="downloadDb" type="button" class="secondary">Descargar DB</button>
+          <div class="current-total">
+            <span>Total actual</span>
+            <strong id="currentTotal">-</strong>
           </div>
+
+          <div class="quick-buttons">
+            <button id="minusOne" type="button" class="btn-secondary">-1</button>
+            <button id="plusOne" type="button" class="btn-secondary">+1</button>
+          </div>
+
+          <label>
+            Nuevo total exacto
+            <input id="newTotal" type="number" min="0" step="1" placeholder="Ej. 10" />
+          </label>
+
+          <button id="saveTotal" type="button">Guardar total</button>
         </div>
+
+        <div id="statusMessage" class="status-message"></div>
       </div>
 
-      <div class="stack-grid">
-        <div class="card" id="correctionCard">
-          <div class="section-head">
-            <div>
-              <span class="section-kicker">Antiabuso</span>
-              <h2>Corrección rápida</h2>
-            </div>
-            <span class="panel-pill danger-pill">Staff</span>
+      <div class="card">
+        <div class="card-title">
+          <div>
+            <p class="mini-title">RANKING</p>
+            <h2>Top usuarios</h2>
           </div>
-
-          <p class="help-text">
-            Si alguien abusa, fija aquí su total correcto. El sistema genera un ajuste manual automáticamente.
-          </p>
-
-          <div class="adjust-box">
-            <label class="field span-2">
-              <span>Usuario</span>
-              <select id="adjust_user_id">
-                <option value="">Selecciona usuario</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>Total final correcto</span>
-              <input id="adjust_total" type="number" min="0" step="1" placeholder="Ej. 12" />
-            </label>
-
-            <div class="adjust-actions">
-              <button id="setUserTotal" type="button">Fijar total</button>
-            </div>
-          </div>
-
-          <div id="statusMessage" class="status-message"></div>
-          <div id="dbPath" class="db-path"></div>
         </div>
 
-        <div class="card">
-          <div class="section-head">
-            <div>
-              <span class="section-kicker">Ranking</span>
-              <h2>Top usuarios</h2>
-            </div>
-            <span class="panel-pill">Top 10</span>
-          </div>
-          <div id="topUsers" class="top-list"></div>
-        </div>
+        <div id="topUsers" class="top-list"></div>
       </div>
     </section>
 
-    <section class="card records-card">
-      <div class="section-head table-section-head">
+    <section class="card">
+      <div class="card-title">
         <div>
-          <span class="section-kicker">Registro completo</span>
-          <h2>Registros</h2>
+          <p class="mini-title">BÚSQUEDA</p>
+          <h2>Filtros</h2>
         </div>
-
-        <div class="table-header-tools">
-          <label class="table-search">
-            <span>Buscar en tabla</span>
-            <input id="quickSearch" type="text" placeholder="Nombre, usuario, ID o canal" />
-          </label>
-          <span id="tableTotal" class="panel-pill">0 tiradas</span>
-        </div>
+        <span id="tableTotal" class="badge">0 tiradas</span>
       </div>
 
-      <div class="legend-row">
-        <span class="legend-item"><i class="legend-dot normal"></i>Registro normal</span>
-        <span class="legend-item"><i class="legend-dot adjust"></i>Ajuste manual / corrección</span>
+      <div class="filters">
+        <label>
+          Usuario
+          <select id="filterUser">
+            <option value="">Todos los usuarios</option>
+          </select>
+        </label>
+
+        <label>
+          Desde
+          <input id="filterDesde" type="date" />
+        </label>
+
+        <label>
+          Hasta
+          <input id="filterHasta" type="date" />
+        </label>
+
+        <div class="filter-buttons">
+          <button id="applyFilters" type="button">Buscar</button>
+          <button id="filterToday" type="button" class="btn-secondary">Hoy</button>
+          <button id="filterWeek" type="button" class="btn-secondary">Semana</button>
+          <button id="filterMonth" type="button" class="btn-secondary">Mes</button>
+          <button id="clearFilters" type="button" class="btn-secondary">Limpiar</button>
+          <button id="exportExcel" type="button" class="btn-secondary">Excel</button>
+          <button id="downloadDb" type="button" class="btn-secondary">DB</button>
+        </div>
       </div>
 
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>ID</th>
               <th>Fecha</th>
               <th>Nombre</th>
               <th>Usuario</th>
-              <th>ID Usuario</th>
-              <th>Año</th>
-              <th>Mes</th>
-              <th>Semana</th>
               <th>Canal</th>
               <th>Conteo</th>
-              <th>Acciones</th>
             </tr>
           </thead>
           <tbody id="tbodyRows"></tbody>
