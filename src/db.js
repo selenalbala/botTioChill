@@ -358,6 +358,13 @@ function getDbPath() {
   return DB_PATH;
 }
 
+function deleteTiradasByUser(userId) {
+  return db.prepare(`
+    DELETE FROM tiradas
+    WHERE user_id = ?
+  `).run(userId);
+}
+
 module.exports = {
   db,
   initDb,
@@ -365,6 +372,7 @@ module.exports = {
   getAllTiradas,
   getTotalGeneral,
   getTotalByUser,
+  deleteTiradasByUser,
   getUserSummary,
   getLastButtonTiradaByUser,
   getByUser,
