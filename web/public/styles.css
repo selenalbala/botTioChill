@@ -41,6 +41,12 @@ body::before {
   background-position: 0 0, 0 12px, 12px -12px, -12px 0;
 }
 
+.login-body {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -73,6 +79,10 @@ body::before {
   font-size: 28px;
 }
 
+.login-brand {
+  margin-bottom: 28px;
+}
+
 .mini-title {
   margin: 0 0 4px;
   color: var(--gold);
@@ -98,6 +108,7 @@ h2 {
 }
 
 .topbar span,
+.login-card span,
 .help {
   color: var(--muted);
 }
@@ -116,7 +127,8 @@ h2 {
 }
 
 .stat-card,
-.card {
+.card,
+.login-card {
   background:
     linear-gradient(180deg, rgba(255,255,255,.04), transparent 45%),
     linear-gradient(180deg, var(--card2), var(--card));
@@ -151,8 +163,13 @@ h2 {
   margin-bottom: 20px;
 }
 
-.card {
+.card,
+.login-card {
   padding: 22px;
+}
+
+.login-card {
+  width: min(100%, 460px);
 }
 
 .card-title {
