@@ -46,20 +46,6 @@ function initDb() {
       conteo INTEGER NOT NULL DEFAULT 1
     );
 
-    CREATE TABLE IF NOT EXISTS empaquetados (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp_utc TEXT NOT NULL,
-      fecha_local TEXT NOT NULL,
-      guild_id TEXT NOT NULL,
-      channel_id TEXT NOT NULL,
-      packer_user_id TEXT NOT NULL,
-      packer_username TEXT NOT NULL,
-      packer_display_name TEXT NOT NULL,
-      meta_empaquetada INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_empaquetados_channel_id ON empaquetados(channel_id);
-
     CREATE TABLE IF NOT EXISTS procesos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp_utc TEXT NOT NULL,
@@ -71,6 +57,18 @@ function initDb() {
       processor_display_name TEXT NOT NULL,
       tiradas_consumidas INTEGER NOT NULL,
       meta_total INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS empaquetados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp_utc TEXT NOT NULL,
+      fecha_local TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      packer_user_id TEXT NOT NULL,
+      packer_username TEXT NOT NULL,
+      packer_display_name TEXT NOT NULL,
+      meta_empaquetada INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS report_logs (
@@ -86,6 +84,7 @@ function initDb() {
     CREATE INDEX IF NOT EXISTS idx_tiradas_fecha_local ON tiradas(fecha_local);
     CREATE INDEX IF NOT EXISTS idx_tiradas_channel_id ON tiradas(channel_id);
     CREATE INDEX IF NOT EXISTS idx_procesos_channel_id ON procesos(channel_id);
+    CREATE INDEX IF NOT EXISTS idx_empaquetados_channel_id ON empaquetados(channel_id);
   `);
 
   if (!columnExists("tiradas", "conteo_procesado")) {
@@ -94,7 +93,6 @@ function initDb() {
       ADD COLUMN conteo_procesado INTEGER NOT NULL DEFAULT 0
     `);
   }
-}
 
   if (!columnExists("procesos", "meta_empaquetada")) {
     db.exec(`
@@ -102,6 +100,7 @@ function initDb() {
       ADD COLUMN meta_empaquetada INTEGER NOT NULL DEFAULT 0
     `);
   }
+}
 
 initDb();
 
@@ -478,7 +477,7 @@ const processPendingTiradasTransaction = db.transaction(({
     throw new Error("No hay suficientes tiradas pendientes para procesar.");
   }
 
-  const result = db.prepare(`
+  return db.prepare(`
     INSERT INTO procesos (
       timestamp_utc,
       fecha_local,
@@ -488,8 +487,9 @@ const processPendingTiradasTransaction = db.transaction(({
       processor_username,
       processor_display_name,
       tiradas_consumidas,
-      meta_total
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      meta_total,
+      meta_empaquetada
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
   `).run(
     timestampUtc,
     fechaLocal,
@@ -501,8 +501,6 @@ const processPendingTiradasTransaction = db.transaction(({
     cantidadTiradas,
     metaTotal
   );
-
-  return result;
 });
 
 function processPendingTiradas(data) {
@@ -516,40 +514,6 @@ function getProcesos(limit = 50) {
     ORDER BY id DESC
     LIMIT ?
   `).all(limit);
-}
-
-function hasReportBeenSent(reportKey) {
-  const row = db.prepare(`
-    SELECT 1 AS exists_report
-    FROM report_logs
-    WHERE report_key = ?
-  `).get(reportKey);
-
-  return Boolean(row);
-}
-
-function markReportSent(reportKey, channelId) {
-  db.prepare(`
-    INSERT OR REPLACE INTO report_logs (
-      report_key,
-      sent_at_utc,
-      channel_id
-    ) VALUES (?, ?, ?)
-  `).run(reportKey, new Date().toISOString(), channelId);
-}
-
-async function backupDatabase(destinationPath) {
-  const directory = path.dirname(path.resolve(destinationPath));
-
-  if (!fs.existsSync(directory)) {
-    fs.mkdirSync(directory, { recursive: true });
-  }
-
-  await db.backup(destinationPath);
-}
-
-function getDbPath() {
-  return DB_PATH;
 }
 
 function getPendingProcessedMeta(channelId) {
@@ -663,6 +627,40 @@ function getEmpaquetados(limit = 50) {
     ORDER BY id DESC
     LIMIT ?
   `).all(limit);
+}
+
+function hasReportBeenSent(reportKey) {
+  const row = db.prepare(`
+    SELECT 1 AS exists_report
+    FROM report_logs
+    WHERE report_key = ?
+  `).get(reportKey);
+
+  return Boolean(row);
+}
+
+function markReportSent(reportKey, channelId) {
+  db.prepare(`
+    INSERT OR REPLACE INTO report_logs (
+      report_key,
+      sent_at_utc,
+      channel_id
+    ) VALUES (?, ?, ?)
+  `).run(reportKey, new Date().toISOString(), channelId);
+}
+
+async function backupDatabase(destinationPath) {
+  const directory = path.dirname(path.resolve(destinationPath));
+
+  if (!fs.existsSync(directory)) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+
+  await db.backup(destinationPath);
+}
+
+function getDbPath() {
+  return DB_PATH;
 }
 
 module.exports = {
