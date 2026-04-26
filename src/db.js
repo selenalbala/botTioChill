@@ -23,6 +23,11 @@ const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
+function columnExists(tableName, columnName) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return columns.some(column => column.name === columnName);
+}
+
 function initDb() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS tiradas (
@@ -41,6 +46,19 @@ function initDb() {
       conteo INTEGER NOT NULL DEFAULT 1
     );
 
+    CREATE TABLE IF NOT EXISTS procesos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp_utc TEXT NOT NULL,
+      fecha_local TEXT NOT NULL,
+      guild_id TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      processor_user_id TEXT NOT NULL,
+      processor_username TEXT NOT NULL,
+      processor_display_name TEXT NOT NULL,
+      tiradas_consumidas INTEGER NOT NULL,
+      meta_total INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS report_logs (
       report_key TEXT PRIMARY KEY,
       sent_at_utc TEXT NOT NULL,
@@ -52,7 +70,16 @@ function initDb() {
     CREATE INDEX IF NOT EXISTS idx_tiradas_anio_semana ON tiradas(anio, semana_iso);
     CREATE INDEX IF NOT EXISTS idx_tiradas_timestamp ON tiradas(timestamp_utc);
     CREATE INDEX IF NOT EXISTS idx_tiradas_fecha_local ON tiradas(fecha_local);
+    CREATE INDEX IF NOT EXISTS idx_tiradas_channel_id ON tiradas(channel_id);
+    CREATE INDEX IF NOT EXISTS idx_procesos_channel_id ON procesos(channel_id);
   `);
+
+  if (!columnExists("tiradas", "conteo_procesado")) {
+    db.exec(`
+      ALTER TABLE tiradas
+      ADD COLUMN conteo_procesado INTEGER NOT NULL DEFAULT 0
+    `);
+  }
 }
 
 initDb();
@@ -70,7 +97,8 @@ const insertTiradaStmt = db.prepare(`
     user_id,
     username,
     display_name,
-    conteo
+    conteo,
+    conteo_procesado
   ) VALUES (
     @timestamp_utc,
     @fecha_local,
@@ -83,7 +111,8 @@ const insertTiradaStmt = db.prepare(`
     @user_id,
     @username,
     @display_name,
-    @conteo
+    @conteo,
+    0
   )
 `);
 
@@ -143,6 +172,24 @@ function getLastButtonTiradaByUser(userId, channelId) {
     ORDER BY timestamp_utc DESC
     LIMIT 1
   `).get(userId, channelId);
+}
+
+function getLastButtonTiradaGlobal(channelId) {
+  return db.prepare(`
+    SELECT *
+    FROM tiradas
+    WHERE channel_id = ?
+      AND conteo > 0
+    ORDER BY timestamp_utc DESC
+    LIMIT 1
+  `).get(channelId);
+}
+
+function deleteTiradasByUser(userId) {
+  return db.prepare(`
+    DELETE FROM tiradas
+    WHERE user_id = ?
+  `).run(userId);
 }
 
 function getByUser(userId) {
@@ -324,6 +371,132 @@ function getFilteredTiradas(filters = {}) {
   `).all(...params);
 }
 
+function getPendingTiradasCount(channelId) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN conteo > conteo_procesado THEN conteo - conteo_procesado
+        ELSE 0
+      END
+    ), 0) AS total
+    FROM tiradas
+    WHERE channel_id = ?
+      AND conteo > 0
+  `).get(channelId);
+
+  return Number(row.total || 0);
+}
+
+function getPendingMetaTotal(channelId, metaPorTirada = 56) {
+  return getPendingTiradasCount(channelId) * metaPorTirada;
+}
+
+function getPendingTiradasByUser(channelId) {
+  return db.prepare(`
+    SELECT
+      user_id,
+      MAX(display_name) AS display_name,
+      MAX(username) AS username,
+      COALESCE(SUM(
+        CASE
+          WHEN conteo > conteo_procesado THEN conteo - conteo_procesado
+          ELSE 0
+        END
+      ), 0) AS tiradas_pendientes
+    FROM tiradas
+    WHERE channel_id = ?
+      AND conteo > 0
+    GROUP BY user_id
+    HAVING tiradas_pendientes > 0
+    ORDER BY tiradas_pendientes DESC, display_name ASC
+  `).all(channelId);
+}
+
+const processPendingTiradasTransaction = db.transaction(({
+  channelId,
+  cantidadTiradas,
+  metaTotal,
+  timestampUtc,
+  fechaLocal,
+  guildId,
+  processorUserId,
+  processorUsername,
+  processorDisplayName
+}) => {
+  let remaining = Number(cantidadTiradas);
+
+  const rows = db.prepare(`
+    SELECT
+      id,
+      conteo,
+      conteo_procesado,
+      conteo - conteo_procesado AS pendiente
+    FROM tiradas
+    WHERE channel_id = ?
+      AND conteo > conteo_procesado
+      AND conteo > 0
+    ORDER BY id ASC
+  `).all(channelId);
+
+  for (const row of rows) {
+    if (remaining <= 0) break;
+
+    const take = Math.min(Number(row.pendiente), remaining);
+    const nuevoProcesado = Number(row.conteo_procesado) + take;
+
+    db.prepare(`
+      UPDATE tiradas
+      SET conteo_procesado = ?
+      WHERE id = ?
+    `).run(nuevoProcesado, row.id);
+
+    remaining -= take;
+  }
+
+  if (remaining > 0) {
+    throw new Error("No hay suficientes tiradas pendientes para procesar.");
+  }
+
+  const result = db.prepare(`
+    INSERT INTO procesos (
+      timestamp_utc,
+      fecha_local,
+      guild_id,
+      channel_id,
+      processor_user_id,
+      processor_username,
+      processor_display_name,
+      tiradas_consumidas,
+      meta_total
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    timestampUtc,
+    fechaLocal,
+    guildId,
+    channelId,
+    processorUserId,
+    processorUsername,
+    processorDisplayName,
+    cantidadTiradas,
+    metaTotal
+  );
+
+  return result;
+});
+
+function processPendingTiradas(data) {
+  return processPendingTiradasTransaction(data);
+}
+
+function getProcesos(limit = 50) {
+  return db.prepare(`
+    SELECT *
+    FROM procesos
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(limit);
+}
+
 function hasReportBeenSent(reportKey) {
   const row = db.prepare(`
     SELECT 1 AS exists_report
@@ -358,13 +531,6 @@ function getDbPath() {
   return DB_PATH;
 }
 
-function deleteTiradasByUser(userId) {
-  return db.prepare(`
-    DELETE FROM tiradas
-    WHERE user_id = ?
-  `).run(userId);
-}
-
 module.exports = {
   db,
   initDb,
@@ -372,9 +538,10 @@ module.exports = {
   getAllTiradas,
   getTotalGeneral,
   getTotalByUser,
-  deleteTiradasByUser,
   getUserSummary,
   getLastButtonTiradaByUser,
+  getLastButtonTiradaGlobal,
+  deleteTiradasByUser,
   getByUser,
   getByMonth,
   getByWeek,
@@ -386,6 +553,11 @@ module.exports = {
   getByLocalDateRange,
   getTopUsersByLocalDateRange,
   getDailyTotalsByLocalDateRange,
+  getPendingTiradasCount,
+  getPendingMetaTotal,
+  getPendingTiradasByUser,
+  processPendingTiradas,
+  getProcesos,
   hasReportBeenSent,
   markReportSent,
   backupDatabase,
