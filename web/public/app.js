@@ -72,72 +72,19 @@ function refreshCurrentTotal() {
   newTotal.value = user.total;
 }
 
-async function setUserTotal(userId, total) {
-  if (!userId) {
-    setStatus("Selecciona un usuario.", "error");
-    return;
-  }
+function setProgressBar(elementId, current, max) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
 
-  if (!Number.isInteger(total) || total < 0) {
-    setStatus("El total debe ser un número entero mayor o igual a 0.", "error");
-    return;
-  }
+  const percentage = max > 0
+    ? Math.min(Math.round((Number(current || 0) / Number(max)) * 100), 100)
+    : 0;
 
-  const data = await fetchJson(`/api/users/${encodeURIComponent(userId)}/total`, {
-    method: "POST",
-    body: JSON.stringify({ total })
-  });
-
-  setStatus(`Total cambiado. Antes: ${data.before}, ahora: ${data.after}.`, "ok");
-  await refreshAll(false);
-}
-
-async function loadDashboard() {
-  const data = await fetchJson("/api/dashboard");
-
-  document.getElementById("statTotal").textContent = data.stats.total;
-  document.getElementById("statUsers").textContent = data.stats.usuarios;
-  document.getElementById("statHoy").textContent = data.stats.hoy;
-  document.getElementById("statMes").textContent = data.stats.mes;
-  renderMeta(data.meta);
-  
-  usersCache = data.users || [];
-
-  fillUserSelect("quickUser", "Selecciona usuario");
-  fillUserSelect("filterUser", "Todos los usuarios");
-
-  refreshCurrentTotal();
-
-  const top = document.getElementById("topUsers");
-  top.innerHTML = "";
-
-  if (!data.top.length) {
-    top.innerHTML = `<div class="top-item">Sin tiradas todavía</div>`;
-    return;
-  }
-
-  data.top.forEach((user, index) => {
-    const div = document.createElement("div");
-    div.className = "top-item";
-    div.innerHTML = `
-      <div class="top-rank">${index + 1}</div>
-      <div>
-        <div class="top-name">${escapeHtml(user.display_name || user.username)}</div>
-        <div class="top-user">${escapeHtml(user.username || user.user_id)}</div>
-      </div>
-      <div class="top-total">${escapeHtml(user.total)}</div>
-    `;
-    top.appendChild(div);
-  });
+  el.style.width = `${percentage}%`;
 }
 
 function renderMeta(meta) {
   if (!meta) return;
-
-  const porcentaje = Math.min(
-    Math.round((Number(meta.metaActual || 0) / Number(meta.metaMaximaProceso || 448)) * 100),
-    100
-  );
 
   document.getElementById("metaActual").textContent = meta.metaActual;
   document.getElementById("metaObjetivo").textContent = `de ${meta.metaMaximaProceso} necesarios`;
@@ -145,12 +92,23 @@ function renderMeta(meta) {
   document.getElementById("tiradasNecesarias").textContent = meta.tiradasParaProcesar;
   document.getElementById("metaRestante").textContent = meta.metaRestante;
 
-  const estado = document.getElementById("metaEstado");
-  estado.textContent = meta.listoParaProcesar ? "Listo para procesar" : "En progreso";
-  estado.className = meta.listoParaProcesar ? "badge badge-ok" : "badge";
+  const metaEstado = document.getElementById("metaEstado");
+  metaEstado.textContent = meta.listoParaProcesar ? "Listo para procesar" : "En progreso";
+  metaEstado.className = meta.listoParaProcesar ? "badge badge-ok" : "badge";
 
-  const progressBar = document.getElementById("metaProgressBar");
-  progressBar.style.width = `${porcentaje}%`;
+  setProgressBar("metaProgressBar", meta.metaActual, meta.metaMaximaProceso);
+
+  document.getElementById("packActual").textContent = meta.metaProcesadaPendiente;
+  document.getElementById("packObjetivo").textContent = `de ${meta.metaParaEmpaquetar} necesarios`;
+  document.getElementById("packRestante").textContent = meta.metaProcesadaRestante;
+  document.getElementById("ultimosProcesos").textContent = meta.ultimosProcesos?.length || 0;
+  document.getElementById("ultimosEmpaquetados").textContent = meta.ultimosEmpaquetados?.length || 0;
+
+  const packEstado = document.getElementById("packEstado");
+  packEstado.textContent = meta.listoParaEmpaquetar ? "Listo para empaquetar" : "Pendiente";
+  packEstado.className = meta.listoParaEmpaquetar ? "badge badge-ok" : "badge";
+
+  setProgressBar("packProgressBar", meta.metaProcesadaPendiente, meta.metaParaEmpaquetar);
 
   const usersBox = document.getElementById("metaUsers");
   usersBox.innerHTML = "";
@@ -179,6 +137,66 @@ function renderMeta(meta) {
 
     usersBox.appendChild(div);
   }
+}
+
+async function setUserTotal(userId, total) {
+  if (!userId) {
+    setStatus("Selecciona un usuario.", "error");
+    return;
+  }
+
+  if (!Number.isInteger(total) || total < 0) {
+    setStatus("El total debe ser un número entero mayor o igual a 0.", "error");
+    return;
+  }
+
+  const data = await fetchJson(`/api/users/${encodeURIComponent(userId)}/total`, {
+    method: "POST",
+    body: JSON.stringify({ total })
+  });
+
+  setStatus(`Total cambiado. Antes: ${data.before}, ahora: ${data.after}.`, "ok");
+  await refreshAll(false);
+}
+
+async function loadDashboard() {
+  const data = await fetchJson("/api/dashboard");
+
+  document.getElementById("statTotal").textContent = data.stats.total;
+  document.getElementById("statUsers").textContent = data.stats.usuarios;
+  document.getElementById("statHoy").textContent = data.stats.hoy;
+  document.getElementById("statMes").textContent = data.stats.mes;
+
+  renderMeta(data.meta);
+
+  usersCache = data.users || [];
+
+  fillUserSelect("quickUser", "Selecciona usuario");
+  fillUserSelect("filterUser", "Todos los usuarios");
+
+  refreshCurrentTotal();
+
+  const top = document.getElementById("topUsers");
+  top.innerHTML = "";
+
+  if (!data.top.length) {
+    top.innerHTML = `<div class="top-item">Sin tiradas todavía</div>`;
+    return;
+  }
+
+  data.top.forEach((user, index) => {
+    const div = document.createElement("div");
+    div.className = "top-item";
+    div.innerHTML = `
+      <div class="top-rank">${index + 1}</div>
+      <div>
+        <div class="top-name">${escapeHtml(user.display_name || user.username)}</div>
+        <div class="top-user">${escapeHtml(user.username || user.user_id)}</div>
+      </div>
+      <div class="top-total">${escapeHtml(user.total)}</div>
+    `;
+    top.appendChild(div);
+  });
 }
 
 function getFilters() {
