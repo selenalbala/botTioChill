@@ -92,7 +92,11 @@ function renderMeta(meta) {
     `${meta.tiradasPendientes} / ${meta.tiradasParaProcesar}`;
   document.getElementById("metaRestante").textContent = meta.metaRestante;
   document.getElementById("metaPorTirada").textContent = meta.metaPorTirada;
-  document.getElementById("manualMetaActual").value = meta.metaActual;
+
+  const manualMetaInput = document.getElementById("manualMetaActual");
+  if (manualMetaInput) {
+    manualMetaInput.value = meta.metaActual;
+  }
 
   const metaEstado = document.getElementById("metaEstado");
   metaEstado.textContent = meta.listoParaProcesar ? "Listo para procesar" : "En progreso";
@@ -255,6 +259,31 @@ async function setUserTotal(userId, total) {
   await refreshAll(false);
 }
 
+async function setMetaActual() {
+  try {
+    const metaActual = Number(document.getElementById("manualMetaActual").value);
+
+    if (!Number.isInteger(metaActual) || metaActual < 0) {
+      setStatus("La meta actual debe ser un número entero mayor o igual a 0.", "error");
+      return;
+    }
+
+    const data = await fetchJson("/api/meta/current", {
+      method: "POST",
+      body: JSON.stringify({ metaActual })
+    });
+
+    setStatus(
+      `Meta actualizada. Antes: ${data.beforeMeta}, ahora: ${data.afterMeta}. Tiradas: ${data.afterTiradas} / 8.`,
+      "ok"
+    );
+
+    await refreshAll(false);
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
 async function loadDashboard() {
   const data = await fetchJson("/api/dashboard");
 
@@ -392,30 +421,10 @@ function setMonthFilter() {
 function bindEvents() {
   document.getElementById("quickUser").addEventListener("change", refreshCurrentTotal);
 
-  document.getElementById("saveMetaActual").addEventListener("click", async () => {
-    try {
-      const metaActual = Number(document.getElementById("manualMetaActual").value);
-
-      if (!Number.isInteger(metaActual) || metaActual < 0) {
-        setStatus("La meta actual debe ser un número entero mayor o igual a 0.", "error");
-        return;
-      }
-
-      const data = await fetchJson("/api/meta/current", {
-        method: "POST",
-        body: JSON.stringify({ metaActual })
-      });
-
-      setStatus(
-        `Meta actualizada. Antes: ${data.beforeMeta}, ahora: ${data.afterMeta}. Tiradas: ${data.afterTiradas} / 8.`,
-        "ok"
-      );
-
-      await refreshAll(false);
-    } catch (error) {
-      setStatus(error.message, "error");
-    }
-  });
+  const saveMetaButton = document.getElementById("saveMetaActual");
+  if (saveMetaButton) {
+    saveMetaButton.addEventListener("click", setMetaActual);
+  }
 
   document.getElementById("saveTotal").addEventListener("click", async () => {
     try {
