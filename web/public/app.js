@@ -88,9 +88,11 @@ function renderMeta(meta) {
 
   document.getElementById("metaActual").textContent = meta.metaActual;
   document.getElementById("metaObjetivo").textContent = `de ${meta.metaMaximaProceso} necesarios`;
-  document.getElementById("tiradasPendientes").textContent = meta.tiradasPendientes;
-  document.getElementById("tiradasNecesarias").textContent = meta.tiradasParaProcesar;
+  document.getElementById("tiradasPendientes").textContent =
+    `${meta.tiradasPendientes} / ${meta.tiradasParaProcesar}`;
   document.getElementById("metaRestante").textContent = meta.metaRestante;
+  document.getElementById("metaPorTirada").textContent = meta.metaPorTirada;
+  document.getElementById("manualMetaActual").value = meta.metaActual;
 
   const metaEstado = document.getElementById("metaEstado");
   metaEstado.textContent = meta.listoParaProcesar ? "Listo para procesar" : "En progreso";
@@ -139,6 +141,100 @@ function renderMeta(meta) {
   }
 }
 
+function renderCompliance(compliance) {
+  const tbody = document.getElementById("complianceRows");
+  tbody.innerHTML = "";
+
+  if (!compliance?.users?.length) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5">No hay miembros con roles autorizados o no se pudo cargar.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  for (const user of compliance.users) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>
+        <strong>${escapeHtml(user.display_name || user.username)}</strong>
+        <span class="cell-sub">${escapeHtml(user.user_id)}</span>
+      </td>
+      <td>${user.today_count} / ${user.daily_required}</td>
+      <td>${user.week_count} / ${user.weekly_required}</td>
+      <td><span class="${user.daily_ok ? "ok-text" : "bad-text"}">${user.daily_ok ? "OK" : "Falta"}</span></td>
+      <td><span class="${user.weekly_ok ? "ok-text" : "bad-text"}">${user.weekly_ok ? "OK" : "Falta"}</span></td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderRoleReviews(reviews) {
+  const box = document.getElementById("roleReviews");
+  box.innerHTML = "";
+
+  if (!reviews || !reviews.length) {
+    box.innerHTML = `<div class="empty-box">No hay revisiones pendientes.</div>`;
+    return;
+  }
+
+  for (const review of reviews) {
+    const div = document.createElement("div");
+    div.className = "review-item";
+    div.innerHTML = `
+      <div>
+        <strong>${escapeHtml(review.display_name || review.username || review.user_id)}</strong>
+        <span>ID: ${escapeHtml(review.user_id)}</span>
+        <span>${escapeHtml(review.reason)}</span>
+      </div>
+      <div class="review-actions">
+        <button type="button" data-review-accept="${review.id}">Aceptar borrado</button>
+        <button type="button" class="btn-secondary" data-review-deny="${review.id}">Denegar</button>
+      </div>
+    `;
+    box.appendChild(div);
+  }
+
+  box.querySelectorAll("[data-review-accept]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const id = button.dataset.reviewAccept;
+      const ok = confirm("¿Seguro que quieres borrar a este usuario de la BBDD?");
+      if (!ok) return;
+
+      try {
+        const data = await fetchJson(`/api/role-reviews/${id}/accept`, {
+          method: "POST",
+          body: JSON.stringify({})
+        });
+
+        setStatus(`Borrado aceptado. Registros eliminados: ${data.deletedRows}.`, "ok");
+        await refreshAll(false);
+      } catch (error) {
+        setStatus(error.message, "error");
+      }
+    });
+  });
+
+  box.querySelectorAll("[data-review-deny]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const id = button.dataset.reviewDeny;
+
+      try {
+        await fetchJson(`/api/role-reviews/${id}/deny`, {
+          method: "POST",
+          body: JSON.stringify({})
+        });
+
+        setStatus("Revisión denegada. No se ha borrado nada.", "ok");
+        await refreshAll(false);
+      } catch (error) {
+        setStatus(error.message, "error");
+      }
+    });
+  });
+}
+
 async function setUserTotal(userId, total) {
   if (!userId) {
     setStatus("Selecciona un usuario.", "error");
@@ -168,6 +264,7 @@ async function loadDashboard() {
   document.getElementById("statMes").textContent = data.stats.mes;
 
   renderMeta(data.meta);
+  renderRoleReviews(data.pendingRoleReviews);
 
   usersCache = data.users || [];
 
@@ -197,6 +294,11 @@ async function loadDashboard() {
     `;
     top.appendChild(div);
   });
+}
+
+async function loadCompliance() {
+  const data = await fetchJson("/api/compliance");
+  renderCompliance(data.compliance);
 }
 
 function getFilters() {
@@ -249,6 +351,7 @@ async function loadTable() {
 async function refreshAll(clearMessage = true) {
   if (clearMessage) setStatus("");
   await loadDashboard();
+  await loadCompliance();
   await loadTable();
 }
 
@@ -289,6 +392,31 @@ function setMonthFilter() {
 function bindEvents() {
   document.getElementById("quickUser").addEventListener("change", refreshCurrentTotal);
 
+  document.getElementById("saveMetaActual").addEventListener("click", async () => {
+    try {
+      const metaActual = Number(document.getElementById("manualMetaActual").value);
+
+      if (!Number.isInteger(metaActual) || metaActual < 0) {
+        setStatus("La meta actual debe ser un número entero mayor o igual a 0.", "error");
+        return;
+      }
+
+      const data = await fetchJson("/api/meta/current", {
+        method: "POST",
+        body: JSON.stringify({ metaActual })
+      });
+
+      setStatus(
+        `Meta actualizada. Antes: ${data.beforeMeta}, ahora: ${data.afterMeta}. Tiradas: ${data.afterTiradas} / 8.`,
+        "ok"
+      );
+
+      await refreshAll(false);
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  });
+
   document.getElementById("saveTotal").addEventListener("click", async () => {
     try {
       const userId = document.getElementById("quickUser").value;
@@ -302,6 +430,7 @@ function bindEvents() {
   document.getElementById("plusOne").addEventListener("click", async () => {
     try {
       const user = getSelectedUser();
+
       if (!user) {
         setStatus("Selecciona un usuario.", "error");
         return;
@@ -316,12 +445,37 @@ function bindEvents() {
   document.getElementById("minusOne").addEventListener("click", async () => {
     try {
       const user = getSelectedUser();
+
       if (!user) {
         setStatus("Selecciona un usuario.", "error");
         return;
       }
 
       await setUserTotal(user.user_id, Math.max(0, Number(user.total) - 1));
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  });
+
+  document.getElementById("deleteUser").addEventListener("click", async () => {
+    try {
+      const user = getSelectedUser();
+
+      if (!user) {
+        setStatus("Selecciona un usuario.", "error");
+        return;
+      }
+
+      const ok = confirm(`¿Seguro que quieres eliminar a ${user.display_name || user.username} de la BBDD?`);
+
+      if (!ok) return;
+
+      const data = await fetchJson(`/api/users/${encodeURIComponent(user.user_id)}`, {
+        method: "DELETE"
+      });
+
+      setStatus(`Usuario eliminado. Registros borrados: ${data.deletedRows}.`, "ok");
+      await refreshAll(false);
     } catch (error) {
       setStatus(error.message, "error");
     }
