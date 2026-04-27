@@ -13,7 +13,7 @@
       <div>
         <p class="mini-title">TÍO CHILL MC · STAFF</p>
         <h1>Panel de Tiradas</h1>
-        <span>Control rápido de miembros, meta, procesos y empaquetados</span>
+        <span>Control de meta, cumplimiento, roles y BBDD</span>
       </div>
     </div>
 
@@ -50,17 +50,15 @@
         <div class="card-title">
           <div>
             <p class="mini-title">META</p>
-            <h2>Estado de producción</h2>
+            <h2>Estado actual</h2>
           </div>
           <span id="metaEstado" class="badge">Cargando</span>
         </div>
 
         <div class="meta-main">
-          <div>
-            <span class="meta-label">Metanfetamina acumulada</span>
-            <strong id="metaActual">0</strong>
-            <small id="metaObjetivo">de 448 necesarios</small>
-          </div>
+          <span class="meta-label">Metanfetamina acumulada</span>
+          <strong id="metaActual">0</strong>
+          <small id="metaObjetivo">de 448 necesarios</small>
 
           <div class="meta-progress">
             <div id="metaProgressBar"></div>
@@ -69,20 +67,33 @@
 
         <div class="meta-stats">
           <div>
-            <span>Tiradas pendientes</span>
-            <strong id="tiradasPendientes">0</strong>
-          </div>
-
-          <div>
-            <span>Tiradas necesarias</span>
-            <strong id="tiradasNecesarias">8</strong>
+            <span>Tiradas</span>
+            <strong id="tiradasPendientes">0 / 8</strong>
           </div>
 
           <div>
             <span>Falta meta</span>
             <strong id="metaRestante">448</strong>
           </div>
+
+          <div>
+            <span>Por tirada</span>
+            <strong id="metaPorTirada">56</strong>
+          </div>
         </div>
+
+        <div class="manual-meta-box">
+          <label>
+            Modificar meta actual
+            <input id="manualMetaActual" type="number" min="0" step="56" placeholder="Ej. 224" />
+          </label>
+
+          <button id="saveMetaActual" type="button">Guardar meta</button>
+        </div>
+
+        <p class="help">
+          La meta debe ir de 56 en 56. Ejemplo: 224 equivale a 4 / 8 tiradas.
+        </p>
       </div>
 
       <div class="card meta-card">
@@ -95,11 +106,9 @@
         </div>
 
         <div class="meta-main">
-          <div>
-            <span class="meta-label">Pendiente de empaquetar</span>
-            <strong id="packActual">0</strong>
-            <small id="packObjetivo">de 448 necesarios</small>
-          </div>
+          <span class="meta-label">Pendiente de empaquetar</span>
+          <strong id="packActual">0</strong>
+          <small id="packObjetivo">de 448 necesarios</small>
 
           <div class="meta-progress">
             <div id="packProgressBar"></div>
@@ -108,17 +117,17 @@
 
         <div class="meta-stats">
           <div>
-            <span>Falta empaquetar</span>
+            <span>Falta</span>
             <strong id="packRestante">448</strong>
           </div>
 
           <div>
-            <span>Últimos procesos</span>
+            <span>Procesos</span>
             <strong id="ultimosProcesos">0</strong>
           </div>
 
           <div>
-            <span>Últimos paquetes</span>
+            <span>Paquetes</span>
             <strong id="ultimosEmpaquetados">0</strong>
           </div>
         </div>
@@ -136,7 +145,7 @@
         </div>
 
         <p class="help">
-          Selecciona un usuario y cambia sus tiradas de forma rápida.
+          Selecciona un usuario y cambia sus tiradas. También puedes eliminarlo de la BBDD.
         </p>
 
         <div class="edit-panel">
@@ -163,6 +172,7 @@
           </label>
 
           <button id="saveTotal" type="button">Guardar total</button>
+          <button id="deleteUser" type="button" class="danger-btn">Eliminar de BBDD</button>
         </div>
 
         <div id="statusMessage" class="status-message"></div>
@@ -178,6 +188,43 @@
 
         <div id="topUsers" class="top-list"></div>
       </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">
+        <div>
+          <p class="mini-title">CUMPLIMIENTO</p>
+          <h2>Diario y semanal</h2>
+        </div>
+        <span class="badge">2/día · 14/semana</span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Miembro</th>
+              <th>Hoy</th>
+              <th>Semana</th>
+              <th>Estado diario</th>
+              <th>Estado semanal</th>
+            </tr>
+          </thead>
+          <tbody id="complianceRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">
+        <div>
+          <p class="mini-title">REVISIÓN DE ROLES</p>
+          <h2>Pendientes de borrar</h2>
+        </div>
+        <span class="badge">Aceptar / denegar</span>
+      </div>
+
+      <div id="roleReviews" class="review-list"></div>
     </section>
 
     <section class="card">
