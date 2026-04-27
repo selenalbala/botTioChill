@@ -7,23 +7,22 @@ const session = require("express-session");
 const XLSX = require("xlsx");
 
 const {
-  TARGET_CHANNEL_ID,
-  META_POR_TIRADA,
-  META_MAXIMA_PROCESO,
-  TIRADAS_PARA_PROCESAR,
-  META_PARA_EMPAQUETAR
+  TARGET_CHANNEL_ID
 } = require("./config");
 
 const db = require("./db");
+
 const {
   getMetaState,
   setCurrentMeta,
   getLocalParts,
   getIsoWeekFromParts
 } = require("./services/metaService");
+
 const { refreshMetaPanel } = require("./services/panelService");
 const { logAction } = require("./services/actionLogService");
 const { getComplianceForGuild } = require("./services/complianceService");
+
 const {
   acceptReviewFromWeb,
   denyReviewFromWeb
@@ -55,6 +54,7 @@ function toInteger(value) {
   if (value === null || value === undefined || value === "") return null;
 
   const number = Number(value);
+
   if (!Number.isInteger(number)) return null;
 
   return number;
@@ -129,10 +129,7 @@ function createWebApp({ client } = {}) {
       return res.status(500).send("WEB_PASSWORD no está configurada en Railway.");
     }
 
-    const validUser = username === expectedUsername;
-    const validPass = password === expectedPassword;
-
-    if (!validUser || !validPass) {
+    if (username !== expectedUsername || password !== expectedPassword) {
       console.log("Login incorrecto:", {
         usernameRecibido: username,
         usernameEsperado: expectedUsername,
@@ -168,15 +165,11 @@ function createWebApp({ client } = {}) {
   });
 
   app.get("/api/dashboard", requireApiAuth, (req, res) => {
-    const stats = db.getDashboardStats();
-    const top = db.getTopUsers(10);
-    const users = db.getDistinctUsers();
-
     res.json({
       ok: true,
-      stats,
-      top,
-      users,
+      stats: db.getDashboardStats(),
+      top: db.getTopUsers(10),
+      users: db.getDistinctUsers(),
       dbPath: db.getDbPath(),
       meta: getMetaState(TARGET_CHANNEL_ID),
       recentLogs: db.getRecentActionLogs(15),
@@ -253,16 +246,19 @@ function createWebApp({ client } = {}) {
         display_name: "Panel web",
         action_type: "meta_manual_adjust",
         status: "success",
-        details: `Meta antes: ${result.beforeMeta}. Meta ahora: ${result.afterMeta}.`
+        details: `Meta antes: ${result.beforeMeta}. Meta ahora: ${result.afterMeta}. Tiradas antes: ${result.beforeTiradas}. Tiradas ahora: ${result.afterTiradas}.`
       });
 
       await refreshMetaPanel(client);
 
       res.json({
         ok: true,
-        ...result
+        ...result,
+        meta: getMetaState(TARGET_CHANNEL_ID)
       });
     } catch (error) {
+      console.error("Error modificando meta:", error);
+
       res.status(400).json({
         ok: false,
         error: error.message
