@@ -7,65 +7,29 @@ const session = require("express-session");
 const XLSX = require("xlsx");
 
 const {
-  insertTirada,
-  getTopUsers,
-  getDistinctUsers,
-  getDashboardStats,
-  getFilteredTiradas,
-  getTotalByUser,
-  getUserSummary,
-  getPendingTiradasCount,
-  getPendingMetaTotal,
-  getPendingTiradasByUser,
-  getPendingProcessedMeta,
-  getProcesos,
-  getEmpaquetados,
-  backupDatabase,
-  getDbPath
-} = require("./db");
+  TARGET_CHANNEL_ID,
+  META_POR_TIRADA,
+  META_MAXIMA_PROCESO,
+  TIRADAS_PARA_PROCESAR,
+  META_PARA_EMPAQUETAR
+} = require("./config");
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const db = require("./db");
+const {
+  getMetaState,
+  setCurrentMeta,
+  getLocalParts,
+  getIsoWeekFromParts
+} = require("./services/metaService");
+const { refreshMetaPanel } = require("./services/panelService");
+const { logAction } = require("./services/actionLogService");
+const { getComplianceForGuild } = require("./services/complianceService");
+const {
+  acceptReviewFromWeb,
+  denyReviewFromWeb
+} = require("./services/roleReviewService");
+
 const TIMEZONE = process.env.TIMEZONE || "Europe/Madrid";
-
-const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
-const META_POR_TIRADA = 56;
-const META_MAXIMA_PROCESO = 448;
-const TIRADAS_PARA_PROCESAR = META_MAXIMA_PROCESO / META_POR_TIRADA;
-const META_PARA_EMPAQUETAR = 448;
-
-function getIsoWeekFromParts(year, month, day) {
-  const d = new Date(Date.UTC(year, month - 1, day));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d - yearStart) / MS_PER_DAY) + 1) / 7);
-}
-
-function getLocalParts(date = new Date(), timeZone = TIMEZONE) {
-  const formatter = new Intl.DateTimeFormat("sv-SE", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  });
-
-  const parts = formatter.formatToParts(date);
-  const get = type => parts.find(p => p.type === type)?.value ?? "0";
-
-  return {
-    year: Number(get("year")),
-    month: Number(get("month")),
-    day: Number(get("day")),
-    hour: get("hour"),
-    minute: get("minute"),
-    second: get("second")
-  };
-}
 
 function buildManualAdjustmentRow(user, delta) {
   const now = new Date();
@@ -96,7 +60,23 @@ function toInteger(value) {
   return number;
 }
 
-function createWebApp() {
+async function getMainGuild(client) {
+  if (!client) return null;
+
+  if (process.env.GUILD_ID) {
+    const guild = await client.guilds.fetch(process.env.GUILD_ID).catch(() => null);
+    if (guild) return guild;
+  }
+
+  if (TARGET_CHANNEL_ID) {
+    const channel = await client.channels.fetch(TARGET_CHANNEL_ID).catch(() => null);
+    if (channel?.guild) return channel.guild;
+  }
+
+  return client.guilds.cache.first() || null;
+}
+
+function createWebApp({ client } = {}) {
   const app = express();
 
   app.set("trust proxy", 1);
@@ -188,46 +168,51 @@ function createWebApp() {
   });
 
   app.get("/api/dashboard", requireApiAuth, (req, res) => {
-    const stats = getDashboardStats();
-    const top = getTopUsers(10);
-    const users = getDistinctUsers();
-
-    const tiradasPendientes = getPendingTiradasCount(TARGET_CHANNEL_ID);
-    const metaActual = getPendingMetaTotal(TARGET_CHANNEL_ID, META_POR_TIRADA);
-    const metaRestante = Math.max(META_MAXIMA_PROCESO - metaActual, 0);
-    const tiradasRestantes = Math.max(TIRADAS_PARA_PROCESAR - tiradasPendientes, 0);
-
-    const metaProcesadaPendiente = getPendingProcessedMeta(TARGET_CHANNEL_ID);
-    const metaProcesadaRestante = Math.max(META_PARA_EMPAQUETAR - metaProcesadaPendiente, 0);
+    const stats = db.getDashboardStats();
+    const top = db.getTopUsers(10);
+    const users = db.getDistinctUsers();
 
     res.json({
       ok: true,
       stats,
       top,
       users,
-      dbPath: getDbPath(),
-      meta: {
-        metaPorTirada: META_POR_TIRADA,
-        metaMaximaProceso: META_MAXIMA_PROCESO,
-        tiradasParaProcesar: TIRADAS_PARA_PROCESAR,
-        tiradasPendientes,
-        metaActual,
-        metaRestante,
-        tiradasRestantes,
-        listoParaProcesar: metaActual >= META_MAXIMA_PROCESO,
-        porUsuarios: getPendingTiradasByUser(TARGET_CHANNEL_ID),
-        metaParaEmpaquetar: META_PARA_EMPAQUETAR,
-        metaProcesadaPendiente,
-        metaProcesadaRestante,
-        listoParaEmpaquetar: metaProcesadaPendiente >= META_PARA_EMPAQUETAR,
-        ultimosProcesos: getProcesos(5),
-        ultimosEmpaquetados: getEmpaquetados(5)
-      }
+      dbPath: db.getDbPath(),
+      meta: getMetaState(TARGET_CHANNEL_ID),
+      recentLogs: db.getRecentActionLogs(15),
+      pendingRoleReviews: db.getRoleDeleteReviews("pending")
     });
   });
 
+  app.get("/api/compliance", requireApiAuth, async (req, res) => {
+    try {
+      const guild = await getMainGuild(client);
+
+      if (!guild) {
+        return res.status(500).json({
+          ok: false,
+          error: "No se pudo encontrar el servidor."
+        });
+      }
+
+      const compliance = await getComplianceForGuild(guild);
+
+      res.json({
+        ok: true,
+        compliance
+      });
+    } catch (error) {
+      console.error("Error cargando cumplimiento:", error);
+
+      res.status(500).json({
+        ok: false,
+        error: "No se pudo cargar el cumplimiento."
+      });
+    }
+  });
+
   app.get("/api/tiradas", requireApiAuth, (req, res) => {
-    const rows = getFilteredTiradas({
+    const rows = db.getFilteredTiradas({
       user_id: req.query.user_id || "",
       anio: req.query.anio || "",
       mes: req.query.mes || "",
@@ -243,7 +228,49 @@ function createWebApp() {
     });
   });
 
-  app.post("/api/users/:userId/total", requireApiAuth, (req, res) => {
+  app.post("/api/meta/current", requireApiAuth, async (req, res) => {
+    try {
+      const metaActual = toInteger(req.body.metaActual);
+
+      if (metaActual === null) {
+        return res.status(400).json({
+          ok: false,
+          error: "La meta actual debe ser un número entero."
+        });
+      }
+
+      const result = setCurrentMeta(metaActual, {
+        username: req.session.username || "web",
+        displayName: "Ajuste desde panel web",
+        guildId: process.env.GUILD_ID || "panel-web"
+      });
+
+      await logAction(client, {
+        guild_id: process.env.GUILD_ID || "panel-web",
+        channel_id: TARGET_CHANNEL_ID,
+        user_id: "panel-web",
+        username: req.session.username || "web",
+        display_name: "Panel web",
+        action_type: "meta_manual_adjust",
+        status: "success",
+        details: `Meta antes: ${result.beforeMeta}. Meta ahora: ${result.afterMeta}.`
+      });
+
+      await refreshMetaPanel(client);
+
+      res.json({
+        ok: true,
+        ...result
+      });
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        error: error.message
+      });
+    }
+  });
+
+  app.post("/api/users/:userId/total", requireApiAuth, async (req, res) => {
     const userId = String(req.params.userId || "").trim();
     const newTotal = toInteger(req.body.total);
 
@@ -261,7 +288,7 @@ function createWebApp() {
       });
     }
 
-    const user = getUserSummary(userId);
+    const user = db.getUserSummary(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -270,23 +297,122 @@ function createWebApp() {
       });
     }
 
-    const before = Number(getTotalByUser(userId));
+    const before = Number(db.getTotalByUser(userId));
     const delta = newTotal - before;
 
     if (delta !== 0) {
-      insertTirada(buildManualAdjustmentRow(user, delta));
+      db.insertTirada(buildManualAdjustmentRow(user, delta));
     }
+
+    await logAction(client, {
+      guild_id: user.guild_id || process.env.GUILD_ID || "panel-web",
+      channel_id: "panel-web-ajuste",
+      user_id: userId,
+      username: user.username,
+      display_name: user.display_name,
+      action_type: "tiradas_manual_adjust",
+      status: "success",
+      details: `Antes: ${before}. Ahora: ${newTotal}. Ajuste: ${delta}.`
+    });
+
+    await refreshMetaPanel(client);
 
     res.json({
       ok: true,
       before,
-      after: Number(getTotalByUser(userId)),
+      after: Number(db.getTotalByUser(userId)),
       delta
     });
   });
 
+  app.delete("/api/users/:userId", requireApiAuth, async (req, res) => {
+    const userId = String(req.params.userId || "").trim();
+
+    if (!userId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Usuario no válido."
+      });
+    }
+
+    const user = db.getUserSummary(userId);
+    const result = db.deleteTiradasByUser(userId);
+
+    db.resolvePendingReviewsForUser({
+      userId,
+      status: "accepted",
+      resolvedByUserId: "panel-web",
+      resolvedByUsername: req.session.username || "web"
+    });
+
+    await logAction(client, {
+      guild_id: user?.guild_id || process.env.GUILD_ID || "panel-web",
+      user_id: userId,
+      username: user?.username || userId,
+      display_name: user?.display_name || userId,
+      action_type: "delete_user_from_web",
+      status: "success",
+      details: `Registros eliminados: ${result.changes}.`
+    });
+
+    await refreshMetaPanel(client);
+
+    res.json({
+      ok: true,
+      deletedRows: result.changes
+    });
+  });
+
+  app.get("/api/role-reviews", requireApiAuth, (req, res) => {
+    res.json({
+      ok: true,
+      reviews: db.getRoleDeleteReviews(req.query.status || "pending")
+    });
+  });
+
+  app.post("/api/role-reviews/:id/accept", requireApiAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+
+      const result = await acceptReviewFromWeb(client, id, {
+        userId: "panel-web",
+        username: req.session.username || "web"
+      });
+
+      res.json({
+        ok: true,
+        deletedRows: result.deletedRows
+      });
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        error: error.message
+      });
+    }
+  });
+
+  app.post("/api/role-reviews/:id/deny", requireApiAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+
+      await denyReviewFromWeb(client, id, {
+        userId: "panel-web",
+        username: req.session.username || "web"
+      });
+
+      res.json({
+        ok: true
+      });
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        error: error.message
+      });
+    }
+  });
+
   app.get("/api/export", requireApiAuth, (req, res) => {
-    const rows = getFilteredTiradas({
+    const rows = db.getFilteredTiradas({
       user_id: req.query.user_id || "",
       anio: req.query.anio || "",
       mes: req.query.mes || "",
@@ -328,7 +454,7 @@ function createWebApp() {
       const fileName = `tiradas_backup_${stamp}.db`;
       const filePath = path.join(exportDir, fileName);
 
-      await backupDatabase(filePath);
+      await db.backupDatabase(filePath);
 
       res.download(filePath, fileName, err => {
         fs.rm(filePath, { force: true }, () => {});
