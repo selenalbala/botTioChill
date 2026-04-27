@@ -9,37 +9,34 @@ const {
   Client,
   GatewayIntentBits,
   Events,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  MessageFlags,
-  ChannelType
+  MessageFlags
 } = require("discord.js");
 
 const {
-  initDb,
-  insertTirada,
-  getAllTiradas,
-  getTotalGeneral,
-  getTotalByUser,
-  getUserSummary,
-  getDistinctUsers,
-  getByMonth,
-  getByWeek,
-  getByRange,
-  getTopUsers,
-  getLastButtonTiradaGlobal,
-  deleteTiradasByUser,
-  getPendingTiradasCount,
-  getPendingMetaTotal,
-  getPendingTiradasByUser,
-  processPendingTiradas,
-  getPendingProcessedMeta,
-  packagePendingMeta
-} = require("./db");
+  TARGET_CHANNEL_ID,
+  TIMEZONE,
+  META_POR_TIRADA,
+  META_MAXIMA_PROCESO,
+  TIRADAS_PARA_PROCESAR,
+  META_PARA_EMPAQUETAR,
+  TIRADA_COOLDOWN_MS
+} = require("./config");
 
+const db = require("./db");
 const { buildTiradaRow, sumRegistros } = require("./stats");
 const { createWebApp } = require("./web");
+
+const { logAction, actionFromInteraction } = require("./services/actionLogService");
+const {
+  getLocalDateText,
+  getMetaState,
+  buildProcessStatusText,
+  buildPackagingStatusText,
+  buildUserPendingText
+} = require("./services/metaService");
+const { refreshMetaPanel } = require("./services/panelService");
+const { memberHasAllowedRole } = require("./services/complianceService");
+const { handleGuildMemberUpdate } = require("./services/roleReviewService");
 
 const client = new Client({
   intents: [
@@ -49,8 +46,6 @@ const client = new Client({
   ]
 });
 
-const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
-const TIMEZONE = process.env.TIMEZONE || "Europe/Madrid";
 const EXPORTS_DIR = path.join(process.cwd(), "exports");
 
 const WEEKLY_REPORT_CHANNEL_ID =
@@ -59,64 +54,6 @@ const WEEKLY_REPORT_CHANNEL_ID =
 const WEEKLY_REPORT_DAY = Number(process.env.WEEKLY_REPORT_DAY || 1);
 const WEEKLY_REPORT_HOUR = Number(process.env.WEEKLY_REPORT_HOUR || 10);
 const WEEKLY_REPORT_MINUTE = Number(process.env.WEEKLY_REPORT_MINUTE || 0);
-
-const TIRADA_COOLDOWN_MS = 70 * 60 * 1000;
-
-const META_POR_TIRADA = 56;
-const META_MAXIMA_PROCESO = 448;
-const TIRADAS_PARA_PROCESAR = META_MAXIMA_PROCESO / META_POR_TIRADA;
-const META_PARA_EMPAQUETAR = 448;
-
-const CLEANUP_REVIEW_CHANNEL_ID = "1498007351993831485";
-
-const pendingCleanupRequests = new Set();
-
-const ALLOWED_TIRADA_ROLE_IDS = new Set([
-  "1492824944575254599",
-  "1495144231654653993",
-  "1492828339457495182",
-  "1492833353391673395",
-  "1492833439433359430",
-  "1492833441442566154",
-  "1492833504206262442"
-]);
-
-function getMemberRoleIds(member) {
-  if (!member?.roles) return [];
-
-  if (member.roles.cache) {
-    return [...member.roles.cache.keys()];
-  }
-
-  if (Array.isArray(member.roles)) {
-    return member.roles;
-  }
-
-  return [];
-}
-
-function memberHasAllowedTiradaRole(member) {
-  const roleIds = getMemberRoleIds(member);
-  return roleIds.some(roleId => ALLOWED_TIRADA_ROLE_IDS.has(roleId));
-}
-
-function getLocalDateText(date = new Date(), timeZone = TIMEZONE) {
-  const formatter = new Intl.DateTimeFormat("sv-SE", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  });
-
-  const parts = formatter.formatToParts(date);
-  const get = type => parts.find(p => p.type === type)?.value ?? "00";
-
-  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
-}
 
 function formatRemainingTime(ms) {
   const totalSeconds = Math.ceil(ms / 1000);
@@ -128,61 +65,6 @@ function formatRemainingTime(ms) {
   }
 
   return `${minutes} min ${seconds} s`;
-}
-
-function formatProcessStatus(channelId = TARGET_CHANNEL_ID) {
-  const tiradasPendientes = getPendingTiradasCount(channelId);
-  const metaPendiente = getPendingMetaTotal(channelId, META_POR_TIRADA);
-  const faltanMeta = Math.max(META_MAXIMA_PROCESO - metaPendiente, 0);
-  const faltanTiradas = Math.max(TIRADAS_PARA_PROCESAR - tiradasPendientes, 0);
-
-  return {
-    tiradasPendientes,
-    metaPendiente,
-    faltanMeta,
-    faltanTiradas,
-    listo: metaPendiente >= META_MAXIMA_PROCESO
-  };
-}
-
-function buildProcessStatusText(channelId = TARGET_CHANNEL_ID) {
-  const status = formatProcessStatus(channelId);
-
-  return [
-    `Meta acumulada: **${status.metaPendiente}/${META_MAXIMA_PROCESO}**`,
-    `Tiradas acumuladas: **${status.tiradasPendientes}/${TIRADAS_PARA_PROCESAR}**`,
-    status.listo
-      ? "Estado: **listo para procesar**."
-      : `Faltan **${status.faltanMeta}** de meta, es decir **${status.faltanTiradas}** tirada(s).`
-  ].join("\n");
-}
-
-function buildPackagingStatusText(channelId = TARGET_CHANNEL_ID) {
-  const metaProcesadaPendiente = getPendingProcessedMeta(channelId);
-  const faltan = Math.max(META_PARA_EMPAQUETAR - metaProcesadaPendiente, 0);
-
-  return [
-    `Meta procesada pendiente de empaquetar: **${metaProcesadaPendiente}/${META_PARA_EMPAQUETAR}**`,
-    metaProcesadaPendiente >= META_PARA_EMPAQUETAR
-      ? "Estado: **listo para empaquetar**."
-      : `Faltan **${faltan}** de meta procesada para poder empaquetar.`
-  ].join("\n");
-}
-
-function buildUserPendingText(channelId = TARGET_CHANNEL_ID) {
-  const rows = getPendingTiradasByUser(channelId);
-
-  if (!rows.length) {
-    return "No hay tiradas pendientes.";
-  }
-
-  return rows
-    .map(row => {
-      const tiradas = Number(row.tiradas_pendientes || 0);
-      const meta = tiradas * META_POR_TIRADA;
-      return `- **${row.display_name || row.username}**: ${tiradas} tirada(s) · ${meta} de meta`;
-    })
-    .join("\n");
 }
 
 function ensureExportsDir() {
@@ -203,383 +85,59 @@ async function replySafe(interaction, payload) {
   return interaction.reply(payload);
 }
 
-function buildPanelRows() {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("tirada_plus_one")
-        .setLabel("+1 tirada")
-        .setStyle(ButtonStyle.Primary)
-    ),
-
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("procesar_meta")
-        .setLabel("Procesar")
-        .setStyle(ButtonStyle.Success)
-    ),
-
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("empaquetar_meta")
-        .setLabel("Empaquetar")
-        .setStyle(ButtonStyle.Secondary)
-    )
-  ];
-}
-
-function buildCleanupReviewRow(userId) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`cleanup_approve:${userId}`)
-      .setLabel("Borrar de la BBDD")
-      .setStyle(ButtonStyle.Danger),
-
-    new ButtonBuilder()
-      .setCustomId(`cleanup_reject:${userId}`)
-      .setLabel("Mantener datos")
-      .setStyle(ButtonStyle.Secondary)
-  );
-}
-
-async function getCleanupReviewChannel() {
-  const channel = await client.channels
-    .fetch(CLEANUP_REVIEW_CHANNEL_ID)
-    .catch(() => null);
-
-  if (!channel || typeof channel.send !== "function") {
-    console.error(`No se pudo acceder al canal de responsables ${CLEANUP_REVIEW_CHANNEL_ID}`);
-    return null;
-  }
-
-  return channel;
-}
-
-async function sendTiradaPressLog({
-  userId,
-  username,
-  displayName,
-  status,
-  reason,
-  totalBefore,
-  totalAfter,
-  channelId,
-  guildName
-}) {
-  const reviewChannel = await getCleanupReviewChannel();
-  if (!reviewChannel) return;
-
-  await reviewChannel.send({
-    content: [
-      "🧾 **Registro de pulsación de tirada**",
-      "",
-      `Usuario: <@${userId}>`,
-      `Nombre: **${displayName || username || userId}**`,
-      `ID: \`${userId}\``,
-      `Servidor: **${guildName || "Desconocido"}**`,
-      `Canal del botón: \`${channelId || "Desconocido"}\``,
-      `Estado: **${status}**`,
-      reason ? `Motivo: **${reason}**` : null,
-      totalBefore !== undefined ? `Total antes: **${totalBefore}**` : null,
-      totalAfter !== undefined ? `Total después: **${totalAfter}**` : null
-    ].filter(Boolean).join("\n")
-  });
-}
-
-async function sendCleanupRequest({
-  userId,
-  username,
-  displayName,
-  total,
-  reason,
-  source
-}) {
-  if (pendingCleanupRequests.has(userId)) return false;
-
-  const reviewChannel = await getCleanupReviewChannel();
-  if (!reviewChannel) return false;
-
-  pendingCleanupRequests.add(userId);
-
-  await reviewChannel.send({
-    content: [
-      "⚠️ **Revisión para borrar tiradas de la BBDD**",
-      "",
-      `Usuario: <@${userId}>`,
-      `Nombre guardado: **${displayName || username || userId}**`,
-      `ID: \`${userId}\``,
-      `Total actual en BBDD: **${total}** tiradas`,
-      `Origen de la revisión: **${source}**`,
-      `Motivo: **${reason}**`,
-      "",
-      "Un responsable debe decidir desde este canal si se borran sus tiradas."
-    ].join("\n"),
-    components: [buildCleanupReviewRow(userId)]
-  });
-
-  return true;
-}
-
-async function sendPanelIfMissing(guild) {
-  const channel = guild.channels.cache.get(TARGET_CHANNEL_ID);
-
-  if (!channel || channel.type !== ChannelType.GuildText) {
-    console.log(`No se encontró el canal ${TARGET_CHANNEL_ID}`);
-    return;
-  }
-
-  const panelContent = [
-    "🏍️ **Panel de tiradas**",
-    "",
-    "Pulsa **+1 tirada** para sumar **56 de metanfetamina**.",
-    "",
-    `Objetivo para procesar: **${META_MAXIMA_PROCESO}**`,
-    `Cada tirada: **${META_POR_TIRADA}**`,
-    `Tiradas necesarias: **${TIRADAS_PARA_PROCESAR}**`,
-    "",
-    "Cuando se llegue al máximo, pulsa **Procesar**.",
-    "Después, pulsa **Empaquetar** para registrar el empaquetado."
-  ].join("\n");
-
-  const messages = await channel.messages.fetch({ limit: 50 });
-
-  const existingPanel = messages.find(
-    msg =>
-      msg.author.id === client.user.id &&
-      msg.components.length > 0 &&
-      msg.components.some(row =>
-        row.components.some(component =>
-          component.customId === "tirada_plus_one" ||
-          component.customId === "procesar_meta" ||
-          component.customId === "empaquetar_meta"
-        )
-      )
-  );
-
-  if (existingPanel) {
-    await existingPanel.edit({
-      content: panelContent,
-      components: buildPanelRows()
-    });
-
-    console.log("Panel de tiradas actualizado con todos los botones.");
-    return;
-  }
-
-  await channel.send({
-    content: panelContent,
-    components: buildPanelRows()
-  });
-
-  console.log("Panel de tiradas enviado automáticamente.");
-}
-
-async function scanInvalidUsersInDatabase(guild) {
-  const users = getDistinctUsers();
-
-  for (const user of users) {
-    const userId = user.user_id;
-    const total = Number(user.total || 0);
-
-    if (total <= 0) continue;
-
-    let member = null;
-
-    try {
-      member = await guild.members.fetch(userId);
-    } catch (_) {
-      member = null;
-    }
-
-    if (!member) {
-      await sendCleanupRequest({
-        userId,
-        username: user.username,
-        displayName: user.display_name,
-        total,
-        source: "Revisión automática al arrancar el bot",
-        reason: "El usuario ya no está en el servidor"
-      });
-      continue;
-    }
-
-    if (!memberHasAllowedTiradaRole(member)) {
-      await sendCleanupRequest({
-        userId,
-        username: user.username,
-        displayName: user.display_name,
-        total,
-        source: "Revisión automática al arrancar el bot",
-        reason: "El usuario está en el servidor, pero ya no tiene un rango autorizado"
-      });
-    }
-  }
-}
-
-async function handleCleanupReviewButton(interaction) {
-  const [action, userId] = interaction.customId.split(":");
-
-  if (interaction.channelId !== CLEANUP_REVIEW_CHANNEL_ID) {
-    await interaction.reply({
-      content: "Esta decisión solo puede hacerse desde el canal de responsables.",
-      flags: MessageFlags.Ephemeral
-    });
-    return;
-  }
-
-  if (!userId) {
-    await interaction.reply({
-      content: "No se ha podido identificar al usuario.",
-      flags: MessageFlags.Ephemeral
-    });
-    return;
-  }
-
-  if (action === "cleanup_reject") {
-    pendingCleanupRequests.delete(userId);
-
-    await interaction.update({
-      content: [
-        "✅ **Revisión cerrada**",
-        "",
-        `El responsable ${interaction.user} ha decidido **mantener** las tiradas de <@${userId}> en la base de datos.`
-      ].join("\n"),
-      components: []
-    });
-
-    return;
-  }
-
-  if (action !== "cleanup_approve") {
-    await interaction.reply({
-      content: "Acción no válida.",
-      flags: MessageFlags.Ephemeral
-    });
-    return;
-  }
-
-  let member = null;
-
-  try {
-    member = await interaction.guild.members.fetch(userId);
-  } catch (_) {
-    member = null;
-  }
-
-  if (member && memberHasAllowedTiradaRole(member)) {
-    pendingCleanupRequests.delete(userId);
-
-    await interaction.update({
-      content: [
-        "⚠️ **Borrado cancelado**",
-        "",
-        `El usuario <@${userId}> vuelve a tener un rango autorizado.`,
-        "No se ha borrado nada de la base de datos."
-      ].join("\n"),
-      components: []
-    });
-
-    return;
-  }
-
-  const result = deleteTiradasByUser(userId);
-  pendingCleanupRequests.delete(userId);
-
-  await interaction.update({
-    content: [
-      "🗑️ **Tiradas borradas de la BBDD**",
-      "",
-      `El responsable ${interaction.user} ha aprobado borrar las tiradas de <@${userId}>.`,
-      `Registros eliminados: **${result.changes}**`
-    ].join("\n"),
-    components: []
-  });
-}
-
-async function handleTiradaButton(interaction) {
-  if (interaction.channelId !== TARGET_CHANNEL_ID) {
-    await sendTiradaPressLog({
-      userId: interaction.user.id,
-      username: interaction.user.username,
-      displayName: interaction.member?.displayName || interaction.user.globalName || interaction.user.username,
-      status: "Bloqueado",
-      reason: "Canal incorrecto",
-      channelId: interaction.channelId,
-      guildName: interaction.guild?.name
-    });
-
-    await interaction.reply({
-      content: "Este botón no corresponde a este canal.",
-      flags: MessageFlags.Ephemeral
-    });
-    return;
-  }
-
+async function ensureMemberAllowed(interaction, actionName) {
   const member = interaction.member;
-  const userId = interaction.user.id;
-  const userSummary = getUserSummary(userId);
-  const totalBefore = Number(getTotalByUser(userId));
-  const displayName =
-    interaction.member?.displayName ||
-    interaction.user.globalName ||
-    interaction.user.username;
 
   if (!member) {
-    await sendTiradaPressLog({
-      userId,
-      username: interaction.user.username,
-      displayName,
-      status: "Bloqueado",
-      reason: "No se pudo comprobar el miembro en el servidor",
-      totalBefore,
-      channelId: interaction.channelId,
-      guildName: interaction.guild?.name
+    await logAction(client, {
+      ...actionFromInteraction(interaction, actionName, "blocked", "No se pudo comprobar el miembro.")
     });
 
     await interaction.reply({
       content: "No se ha podido comprobar si sigues dentro del servidor.",
       flags: MessageFlags.Ephemeral
     });
-    return;
+
+    return false;
   }
 
-  if (!memberHasAllowedTiradaRole(member)) {
-    await sendTiradaPressLog({
-      userId,
-      username: interaction.user.username,
-      displayName,
-      status: "Bloqueado",
-      reason: "No tiene rango autorizado",
-      totalBefore,
-      channelId: interaction.channelId,
-      guildName: interaction.guild?.name
+  if (!memberHasAllowedRole(member)) {
+    await logAction(client, {
+      ...actionFromInteraction(interaction, actionName, "blocked", "No tiene un rol autorizado.")
     });
-
-    if (userSummary && totalBefore > 0) {
-      await sendCleanupRequest({
-        userId,
-        username: userSummary.username || interaction.user.username,
-        displayName: userSummary.display_name || displayName,
-        total: totalBefore,
-        source: "Ha pulsado el botón +1 tirada",
-        reason: "El usuario no tiene actualmente un rango autorizado"
-      });
-
-      await interaction.reply({
-        content: "No tienes un rango autorizado para registrar tiradas. Se ha avisado a responsables para revisar si deben borrar tus tiradas de la BBDD.",
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
 
     await interaction.reply({
-      content: "No tienes un rango autorizado para registrar tiradas.",
+      content: "No tienes un rango autorizado para usar este botón.",
       flags: MessageFlags.Ephemeral
     });
+
+    return false;
+  }
+
+  return true;
+}
+
+async function handleTiradaButton(interaction) {
+  if (interaction.channelId !== TARGET_CHANNEL_ID) {
+    await logAction(client, {
+      ...actionFromInteraction(interaction, "tirada_click", "blocked", "Canal incorrecto.")
+    });
+
+    await interaction.reply({
+      content: "Este botón no corresponde a este canal.",
+      flags: MessageFlags.Ephemeral
+    });
+
     return;
   }
 
-  const lastTirada = getLastButtonTiradaGlobal(TARGET_CHANNEL_ID);
+  const allowed = await ensureMemberAllowed(interaction, "tirada_click");
+
+  if (!allowed) return;
+
+  const userId = interaction.user.id;
+  const totalBefore = Number(db.getTotalByUser(userId));
+  const lastTirada = db.getLastButtonTiradaGlobal(TARGET_CHANNEL_ID);
 
   if (lastTirada) {
     const lastTime = new Date(lastTirada.timestamp_utc).getTime();
@@ -595,15 +153,13 @@ async function handleTiradaButton(interaction) {
           lastTirada.username ||
           "otro usuario";
 
-        await sendTiradaPressLog({
-          userId,
-          username: interaction.user.username,
-          displayName,
-          status: "Bloqueado",
-          reason: `Cooldown activo por última tirada de ${nombreUltimo}. Falta ${formatRemainingTime(remaining)}`,
-          totalBefore,
-          channelId: interaction.channelId,
-          guildName: interaction.guild?.name
+        await logAction(client, {
+          ...actionFromInteraction(
+            interaction,
+            "tirada_click",
+            "blocked",
+            `Cooldown activo por última tirada de ${nombreUltimo}. Falta ${formatRemainingTime(remaining)}.`
+          )
         });
 
         await interaction.reply({
@@ -628,22 +184,21 @@ async function handleTiradaButton(interaction) {
   });
 
   const row = buildTiradaRow(interaction, TIMEZONE);
-  insertTirada(row);
+  db.insertTirada(row);
 
-  const totalAfter = Number(getTotalByUser(userId));
-  const status = formatProcessStatus(TARGET_CHANNEL_ID);
+  const totalAfter = Number(db.getTotalByUser(userId));
+  const state = getMetaState(TARGET_CHANNEL_ID);
 
-  await sendTiradaPressLog({
-    userId,
-    username: interaction.user.username,
-    displayName,
-    status: "Aceptado",
-    reason: "Tirada registrada correctamente",
-    totalBefore,
-    totalAfter,
-    channelId: interaction.channelId,
-    guildName: interaction.guild?.name
+  await logAction(client, {
+    ...actionFromInteraction(
+      interaction,
+      "tirada_accepted",
+      "success",
+      `Antes: ${totalBefore}. Después: ${totalAfter}. Meta actual: ${state.metaActual}/${META_MAXIMA_PROCESO}.`
+    )
   });
+
+  await refreshMetaPanel(client);
 
   await interaction.editReply({
     content: [
@@ -653,7 +208,7 @@ async function handleTiradaButton(interaction) {
       "",
       buildProcessStatusText(TARGET_CHANNEL_ID),
       "",
-      status.listo
+      state.listoParaProcesar
         ? "Ya se ha llegado al máximo. Ahora se puede pulsar **Procesar**."
         : "Podrá hacerse otra tirada cuando pase **1h 10min** desde esta."
     ].join("\n")
@@ -662,16 +217,29 @@ async function handleTiradaButton(interaction) {
 
 async function handleProcesarButton(interaction) {
   if (interaction.channelId !== TARGET_CHANNEL_ID) {
+    await logAction(client, {
+      ...actionFromInteraction(interaction, "procesar_click", "blocked", "Canal incorrecto.")
+    });
+
     await interaction.reply({
       content: "Este botón no corresponde a este canal.",
       flags: MessageFlags.Ephemeral
     });
+
     return;
   }
 
-  const status = formatProcessStatus(TARGET_CHANNEL_ID);
+  const allowed = await ensureMemberAllowed(interaction, "procesar_click");
 
-  if (!status.listo) {
+  if (!allowed) return;
+
+  const state = getMetaState(TARGET_CHANNEL_ID);
+
+  if (!state.listoParaProcesar) {
+    await logAction(client, {
+      ...actionFromInteraction(interaction, "procesar_click", "blocked", "No hay meta suficiente para procesar.")
+    });
+
     await interaction.reply({
       content: [
         "Todavía no se puede procesar.",
@@ -690,7 +258,7 @@ async function handleProcesarButton(interaction) {
     flags: MessageFlags.Ephemeral
   });
 
-  processPendingTiradas({
+  db.processPendingTiradas({
     channelId: TARGET_CHANNEL_ID,
     cantidadTiradas: TIRADAS_PARA_PROCESAR,
     metaTotal: META_MAXIMA_PROCESO,
@@ -704,6 +272,17 @@ async function handleProcesarButton(interaction) {
       interaction.user.globalName ||
       interaction.user.username
   });
+
+  await logAction(client, {
+    ...actionFromInteraction(
+      interaction,
+      "procesar_success",
+      "success",
+      `Se han procesado ${META_MAXIMA_PROCESO} de meta.`
+    )
+  });
+
+  await refreshMetaPanel(client);
 
   await interaction.editReply({
     content: [
@@ -724,16 +303,29 @@ async function handleProcesarButton(interaction) {
 
 async function handleEmpaquetarButton(interaction) {
   if (interaction.channelId !== TARGET_CHANNEL_ID) {
+    await logAction(client, {
+      ...actionFromInteraction(interaction, "empaquetar_click", "blocked", "Canal incorrecto.")
+    });
+
     await interaction.reply({
       content: "Este botón no corresponde a este canal.",
       flags: MessageFlags.Ephemeral
     });
+
     return;
   }
 
-  const metaProcesadaPendiente = getPendingProcessedMeta(TARGET_CHANNEL_ID);
+  const allowed = await ensureMemberAllowed(interaction, "empaquetar_click");
 
-  if (metaProcesadaPendiente < META_PARA_EMPAQUETAR) {
+  if (!allowed) return;
+
+  const state = getMetaState(TARGET_CHANNEL_ID);
+
+  if (!state.listoParaEmpaquetar) {
+    await logAction(client, {
+      ...actionFromInteraction(interaction, "empaquetar_click", "blocked", "No hay meta procesada suficiente para empaquetar.")
+    });
+
     await interaction.reply({
       content: [
         "Todavía no se puede empaquetar.",
@@ -750,7 +342,7 @@ async function handleEmpaquetarButton(interaction) {
     flags: MessageFlags.Ephemeral
   });
 
-  packagePendingMeta({
+  db.packagePendingMeta({
     channelId: TARGET_CHANNEL_ID,
     metaAempaquetar: META_PARA_EMPAQUETAR,
     timestampUtc: new Date().toISOString(),
@@ -764,6 +356,17 @@ async function handleEmpaquetarButton(interaction) {
       interaction.user.username
   });
 
+  await logAction(client, {
+    ...actionFromInteraction(
+      interaction,
+      "empaquetar_success",
+      "success",
+      `Se han empaquetado ${META_PARA_EMPAQUETAR} de meta.`
+    )
+  });
+
+  await refreshMetaPanel(client);
+
   await interaction.editReply({
     content: [
       "Empaquetado registrado correctamente.",
@@ -776,19 +379,17 @@ async function handleEmpaquetarButton(interaction) {
 }
 
 client.once(Events.ClientReady, async () => {
-  initDb();
+  db.initDb();
   ensureExportsDir();
 
   console.log(`Bot listo como ${client.user.tag}`);
   console.log("DB PATH:", process.env.DB_PATH || "./tiradas.db");
 
-  for (const guild of client.guilds.cache.values()) {
-    try {
-      await sendPanelIfMissing(guild);
-      await scanInvalidUsersInDatabase(guild);
-    } catch (error) {
-      console.error(`Error revisando ${guild.name}:`, error);
-    }
+  try {
+    await refreshMetaPanel(client);
+    console.log("Panel de meta actualizado.");
+  } catch (error) {
+    console.error("Error actualizando panel de meta:", error);
   }
 
   startWeeklyReportScheduler(client, {
@@ -804,13 +405,21 @@ client.once(Events.ClientReady, async () => {
   );
 });
 
+client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
+  try {
+    await handleGuildMemberUpdate(client, oldMember, newMember);
+  } catch (error) {
+    console.error("Error revisando cambio de rol:", error);
+  }
+});
+
 client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === "total") {
         await interaction.reply({
           content: [
-            `Total general histórico: **${getTotalGeneral()}** tiradas.`,
+            `Total general histórico: **${db.getTotalGeneral()}** tiradas.`,
             "",
             buildProcessStatusText(TARGET_CHANNEL_ID),
             "",
@@ -823,7 +432,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (interaction.commandName === "tiradas_usuario") {
         const user = interaction.options.getUser("usuario", true);
-        const total = getTotalByUser(user.id);
+        const total = db.getTotalByUser(user.id);
 
         await interaction.reply({
           content: `${user} tiene **${total}** tiradas históricas.`,
@@ -844,7 +453,7 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
 
-        const rows = getByMonth(anio, mes);
+        const rows = db.getByMonth(anio, mes);
 
         await interaction.reply({
           content: `Mes ${mes}/${anio}: **${sumRegistros(rows)}** tiradas.`,
@@ -856,7 +465,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.commandName === "tiradas_semana") {
         const anio = interaction.options.getInteger("anio", true);
         const semana = interaction.options.getInteger("semana", true);
-        const rows = getByWeek(anio, semana);
+        const rows = db.getByWeek(anio, semana);
 
         await interaction.reply({
           content: `Semana ${semana} de ${anio}: **${sumRegistros(rows)}** tiradas.`,
@@ -872,7 +481,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const fromIso = `${desde}T00:00:00.000Z`;
         const toIso = `${hasta}T23:59:59.999Z`;
 
-        const rows = getByRange(fromIso, toIso);
+        const rows = db.getByRange(fromIso, toIso);
 
         await interaction.reply({
           content: `Desde ${desde} hasta ${hasta}: **${sumRegistros(rows)}** tiradas.`,
@@ -883,7 +492,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (interaction.commandName === "top_tiradas") {
         const limite = interaction.options.getInteger("limite") || 10;
-        const top = getTopUsers(limite);
+        const top = db.getTopUsers(limite);
 
         if (!top.length) {
           await interaction.reply({
@@ -909,7 +518,7 @@ client.on(Events.InteractionCreate, async interaction => {
           flags: MessageFlags.Ephemeral
         });
 
-        const rows = getAllTiradas();
+        const rows = db.getAllTiradas();
 
         if (!rows.length) {
           await interaction.editReply({
@@ -960,14 +569,6 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.isButton()) {
-      if (
-        interaction.customId.startsWith("cleanup_approve:") ||
-        interaction.customId.startsWith("cleanup_reject:")
-      ) {
-        await handleCleanupReviewButton(interaction);
-        return;
-      }
-
       if (interaction.customId === "tirada_plus_one") {
         await handleTiradaButton(interaction);
         return;
@@ -997,7 +598,7 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
-const app = createWebApp();
+const app = createWebApp({ client });
 const port = Number(process.env.PORT || 3000);
 
 app.listen(port, "0.0.0.0", () => {
