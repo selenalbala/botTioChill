@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
+
 require("dotenv").config();
 
 const DEFAULT_DB_PATH = path.join(process.cwd(), "tiradas.db");
@@ -19,7 +20,6 @@ function ensureDbDirectory(dbPath) {
 ensureDbDirectory(DB_PATH);
 
 const db = new Database(DB_PATH);
-
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
@@ -113,6 +113,16 @@ function initDb() {
       updated_at_utc TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS member_web_accounts (
+      discord_user_id TEXT PRIMARY KEY,
+      web_username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at_utc TEXT NOT NULL,
+      updated_at_utc TEXT NOT NULL,
+      last_login_at_utc TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_tiradas_user_id ON tiradas(user_id);
     CREATE INDEX IF NOT EXISTS idx_tiradas_anio_mes ON tiradas(anio, mes);
     CREATE INDEX IF NOT EXISTS idx_tiradas_anio_semana ON tiradas(anio, semana_iso);
@@ -124,6 +134,7 @@ function initDb() {
     CREATE INDEX IF NOT EXISTS idx_acciones_log_timestamp ON acciones_log(timestamp_utc);
     CREATE INDEX IF NOT EXISTS idx_role_delete_reviews_status ON role_delete_reviews(status);
     CREATE INDEX IF NOT EXISTS idx_role_delete_reviews_user ON role_delete_reviews(user_id);
+    CREATE INDEX IF NOT EXISTS idx_member_web_accounts_username ON member_web_accounts(web_username);
   `);
 
   if (!columnExists("tiradas", "conteo_procesado")) {
@@ -305,7 +316,8 @@ function getTopUsersByLocalDateRange(desde, hasta, limit = 10) {
       MAX(username) AS username,
       SUM(conteo) AS total
     FROM tiradas
-    WHERE fecha_local >= ? AND fecha_local <= ?
+    WHERE fecha_local >= ?
+      AND fecha_local <= ?
       AND user_id NOT LIKE 'panel-web-%'
     GROUP BY user_id
     ORDER BY total DESC, display_name ASC
@@ -446,6 +458,17 @@ function getPendingTiradasCount(channelId) {
   return Math.max(0, Number(row.total || 0));
 }
 
+function getPendingTiradasCountByUser(channelId, userId) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(conteo - conteo_procesado), 0) AS total
+    FROM tiradas
+    WHERE channel_id = ?
+      AND user_id = ?
+  `).get(channelId, userId);
+
+  return Math.max(0, Number(row.total || 0));
+}
+
 function getPendingMetaTotal(channelId, metaPorTirada = 56) {
   return getPendingTiradasCount(channelId) * metaPorTirada;
 }
@@ -478,7 +501,6 @@ const processPendingTiradasTransaction = db.transaction(({
   processorDisplayName
 }) => {
   let remaining = Number(cantidadTiradas);
-
   const totalPendiente = getPendingTiradasCount(channelId);
 
   if (totalPendiente < cantidadTiradas) {
@@ -694,6 +716,19 @@ function getCountsByUserForLocalDateRange(channelId, desde, hasta) {
   `).all(channelId, `${desde} 00:00:00`, `${hasta} 23:59:59`);
 }
 
+function getTotalByUserForLocalDateRange(channelId, userId, desde, hasta) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN conteo > 0 THEN conteo ELSE 0 END), 0) AS total
+    FROM tiradas
+    WHERE channel_id = ?
+      AND user_id = ?
+      AND fecha_local >= ?
+      AND fecha_local <= ?
+  `).get(channelId, userId, `${desde} 00:00:00`, `${hasta} 23:59:59`);
+
+  return Number(row.total || 0);
+}
+
 function insertActionLog(action) {
   return db.prepare(`
     INSERT INTO acciones_log (
@@ -872,6 +907,78 @@ function markReportSent(reportKey, channelId) {
   `).run(reportKey, new Date().toISOString(), channelId);
 }
 
+function upsertMemberWebAccount({ discordUserId, webUsername, passwordHash, active = 1 }) {
+  const now = new Date().toISOString();
+
+  return db.prepare(`
+    INSERT INTO member_web_accounts (
+      discord_user_id,
+      web_username,
+      password_hash,
+      active,
+      created_at_utc,
+      updated_at_utc
+    ) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(discord_user_id) DO UPDATE SET
+      web_username = excluded.web_username,
+      password_hash = excluded.password_hash,
+      active = excluded.active,
+      updated_at_utc = excluded.updated_at_utc
+  `).run(
+    discordUserId,
+    webUsername,
+    passwordHash,
+    active ? 1 : 0,
+    now,
+    now
+  );
+}
+
+function getMemberWebAccountByUsername(username) {
+  return db.prepare(`
+    SELECT *
+    FROM member_web_accounts
+    WHERE lower(web_username) = lower(?)
+    LIMIT 1
+  `).get(username);
+}
+
+function getMemberWebAccountByDiscordId(userId) {
+  return db.prepare(`
+    SELECT *
+    FROM member_web_accounts
+    WHERE discord_user_id = ?
+    LIMIT 1
+  `).get(userId);
+}
+
+function markMemberWebAccountLogin(userId) {
+  return db.prepare(`
+    UPDATE member_web_accounts
+    SET last_login_at_utc = ?
+    WHERE discord_user_id = ?
+  `).run(new Date().toISOString(), userId);
+}
+
+function getMemberWebAccounts() {
+  return db.prepare(`
+    SELECT
+      a.discord_user_id,
+      MAX(t.display_name) AS display_name,
+      MAX(t.username) AS discord_username,
+      COALESCE(SUM(t.conteo), 0) AS total_tiradas,
+      a.web_username,
+      a.active,
+      a.created_at_utc,
+      a.updated_at_utc,
+      a.last_login_at_utc
+    FROM member_web_accounts a
+    LEFT JOIN tiradas t ON t.user_id = a.discord_user_id
+    GROUP BY a.discord_user_id
+    ORDER BY display_name ASC, a.web_username ASC
+  `).all();
+}
+
 async function backupDatabase(destinationPath) {
   const directory = path.dirname(path.resolve(destinationPath));
 
@@ -889,7 +996,6 @@ function getDbPath() {
 module.exports = {
   db,
   initDb,
-
   insertTirada,
   getAllTiradas,
   getTotalGeneral,
@@ -898,7 +1004,6 @@ module.exports = {
   getLastButtonTiradaByUser,
   getLastButtonTiradaGlobal,
   deleteTiradasByUser,
-
   getByUser,
   getByMonth,
   getByWeek,
@@ -910,8 +1015,8 @@ module.exports = {
   getByLocalDateRange,
   getTopUsersByLocalDateRange,
   getDailyTotalsByLocalDateRange,
-
   getPendingTiradasCount,
+  getPendingTiradasCountByUser,
   getPendingMetaTotal,
   getPendingTiradasByUser,
   processPendingTiradas,
@@ -920,23 +1025,24 @@ module.exports = {
   getPendingProcessedByProcess,
   packagePendingMeta,
   getEmpaquetados,
-
   getCountsByUserForLocalDateRange,
-
+  getTotalByUserForLocalDateRange,
   insertActionLog,
   getRecentActionLogs,
-
   getMetaStatusMessage,
   saveMetaStatusMessage,
-
   createRoleDeleteReview,
   getRoleDeleteReviewById,
   getRoleDeleteReviews,
   resolveRoleDeleteReview,
   resolvePendingReviewsForUser,
-
   hasReportBeenSent,
   markReportSent,
+  upsertMemberWebAccount,
+  getMemberWebAccountByUsername,
+  getMemberWebAccountByDiscordId,
+  markMemberWebAccountLogin,
+  getMemberWebAccounts,
   backupDatabase,
   getDbPath
 };
