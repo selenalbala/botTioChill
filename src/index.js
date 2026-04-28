@@ -3,8 +3,8 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const XLSX = require("xlsx");
-const { sendWeeklyReport, startWeeklyReportScheduler } = require("./report");
 
+const { sendWeeklyReport, startWeeklyReportScheduler } = require("./report");
 const {
   Client,
   GatewayIntentBits,
@@ -23,9 +23,8 @@ const {
 } = require("./config");
 
 const db = require("./db");
-const { buildTiradaRow, sumRegistros } = require("./stats");
+const { buildTiradaRow } = require("./stats");
 const { createWebApp } = require("./web");
-
 const { logAction, actionFromInteraction } = require("./services/actionLogService");
 const {
   getLocalDateText,
@@ -37,6 +36,7 @@ const {
 const { refreshMetaPanel } = require("./services/panelService");
 const { memberHasAllowedRole } = require("./services/complianceService");
 const { handleGuildMemberUpdate } = require("./services/roleReviewService");
+const { sendMemberStatsDm } = require("./services/memberAuthService");
 
 const client = new Client({
   intents: [
@@ -47,22 +47,21 @@ const client = new Client({
 });
 
 const EXPORTS_DIR = path.join(process.cwd(), "exports");
-
-const WEEKLY_REPORT_CHANNEL_ID =
-  process.env.WEEKLY_REPORT_CHANNEL_ID || "1492877561888243752";
-
+const WEEKLY_REPORT_CHANNEL_ID = process.env.WEEKLY_REPORT_CHANNEL_ID || process.env.TARGET_CHANNEL_ID;
 const WEEKLY_REPORT_DAY = Number(process.env.WEEKLY_REPORT_DAY || 1);
 const WEEKLY_REPORT_HOUR = Number(process.env.WEEKLY_REPORT_HOUR || 10);
 const WEEKLY_REPORT_MINUTE = Number(process.env.WEEKLY_REPORT_MINUTE || 0);
+const PORT = Number(process.env.PORT || 3000);
+
+let cooldownPanelTimer = null;
 
 function formatRemainingTime(ms) {
-  const totalSeconds = Math.ceil(ms / 1000);
+  const safeMs = Math.max(0, Number(ms || 0));
+  const totalSeconds = Math.ceil(safeMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
 
-  if (minutes <= 0) {
-    return `${seconds} segundos`;
-  }
+  if (minutes <= 0) return `${seconds} s`;
 
   return `${minutes} min ${seconds} s`;
 }
@@ -70,6 +69,29 @@ function formatRemainingTime(ms) {
 function ensureExportsDir() {
   if (!fs.existsSync(EXPORTS_DIR)) {
     fs.mkdirSync(EXPORTS_DIR, { recursive: true });
+  }
+}
+
+function scheduleCooldownPanelRefresh() {
+  if (cooldownPanelTimer) {
+    clearTimeout(cooldownPanelTimer);
+    cooldownPanelTimer = null;
+  }
+
+  const last = db.getLastButtonTiradaGlobal(TARGET_CHANNEL_ID);
+  if (!last) return;
+
+  const lastMs = new Date(last.timestamp_utc).getTime();
+  if (Number.isNaN(lastMs)) return;
+
+  const delay = lastMs + TIRADA_COOLDOWN_MS - Date.now() + 2000;
+
+  if (delay > 0 && delay < 2147483647) {
+    cooldownPanelTimer = setTimeout(() => {
+      refreshMetaPanel(client).catch(error => {
+        console.error("Error refrescando panel tras cooldown:", error);
+      });
+    }, delay);
   }
 }
 
@@ -117,6 +139,15 @@ async function ensureMemberAllowed(interaction, actionName) {
   return true;
 }
 
+function getNextTiradaUnixFromLast(lastTirada) {
+  if (!lastTirada) return null;
+
+  const lastTime = new Date(lastTirada.timestamp_utc).getTime();
+  if (Number.isNaN(lastTime)) return null;
+
+  return Math.floor((lastTime + TIRADA_COOLDOWN_MS) / 1000);
+}
+
 async function handleTiradaButton(interaction) {
   if (interaction.channelId !== TARGET_CHANNEL_ID) {
     await logAction(client, {
@@ -132,7 +163,6 @@ async function handleTiradaButton(interaction) {
   }
 
   const allowed = await ensureMemberAllowed(interaction, "tirada_click");
-
   if (!allowed) return;
 
   const userId = interaction.user.id;
@@ -148,10 +178,8 @@ async function handleTiradaButton(interaction) {
       const remaining = TIRADA_COOLDOWN_MS - elapsed;
 
       if (remaining > 0) {
-        const nombreUltimo =
-          lastTirada.display_name ||
-          lastTirada.username ||
-          "otro usuario";
+        const nombreUltimo = lastTirada.display_name || lastTirada.username || "otro usuario";
+        const nextUnix = getNextTiradaUnixFromLast(lastTirada);
 
         await logAction(client, {
           ...actionFromInteraction(
@@ -167,7 +195,9 @@ async function handleTiradaButton(interaction) {
             "Ahora no se puede hacer otra tirada.",
             "",
             `La última tirada la hizo **${nombreUltimo}**.`,
-            `Tienes que esperar **${formatRemainingTime(remaining)}** para volver a pulsar +1 tirada.`,
+            nextUnix
+              ? `Tienes que esperar hasta **<t:${nextUnix}:R>** · hora: <t:${nextUnix}:t>.`
+              : `Tienes que esperar **${formatRemainingTime(remaining)}** para volver a pulsar +1 tirada.`,
             "",
             buildProcessStatusText(TARGET_CHANNEL_ID)
           ].join("\n"),
@@ -188,6 +218,7 @@ async function handleTiradaButton(interaction) {
 
   const totalAfter = Number(db.getTotalByUser(userId));
   const state = getMetaState(TARGET_CHANNEL_ID);
+  const nextUnix = Math.floor((Date.now() + TIRADA_COOLDOWN_MS) / 1000);
 
   await logAction(client, {
     ...actionFromInteraction(
@@ -199,12 +230,20 @@ async function handleTiradaButton(interaction) {
   });
 
   await refreshMetaPanel(client);
+  scheduleCooldownPanelRefresh();
+
+  try {
+    await sendMemberStatsDm(interaction.user, "tirada_registrada");
+  } catch (error) {
+    console.error("No se pudo enviar MD al usuario:", error.message);
+  }
 
   await interaction.editReply({
     content: [
       `Tirada registrada. Has sumado **${META_POR_TIRADA}** de metanfetamina.`,
       "",
       `Tu total acumulado es **${totalAfter}** tirada(s).`,
+      `Siguiente tirada: **<t:${nextUnix}:R>** · hora: <t:${nextUnix}:t>.`,
       "",
       buildProcessStatusText(TARGET_CHANNEL_ID),
       "",
@@ -230,7 +269,6 @@ async function handleProcesarButton(interaction) {
   }
 
   const allowed = await ensureMemberAllowed(interaction, "procesar_click");
-
   if (!allowed) return;
 
   const state = getMetaState(TARGET_CHANNEL_ID);
@@ -316,7 +354,6 @@ async function handleEmpaquetarButton(interaction) {
   }
 
   const allowed = await ensureMemberAllowed(interaction, "empaquetar_click");
-
   if (!allowed) return;
 
   const state = getMetaState(TARGET_CHANNEL_ID);
@@ -378,15 +415,24 @@ async function handleEmpaquetarButton(interaction) {
   });
 }
 
-client.once(Events.ClientReady, async () => {
-  db.initDb();
-  ensureExportsDir();
+function startWebPanel() {
+  const app = createWebApp({ client });
 
+  app.listen(PORT, () => {
+    console.log(`Panel web escuchando en puerto ${PORT}`);
+    console.log(`DB PATH: ${db.getDbPath()}`);
+  });
+}
+
+client.once(Events.ClientReady, async () => {
   console.log(`Bot listo como ${client.user.tag}`);
-  console.log("DB PATH:", process.env.DB_PATH || "./tiradas.db");
+
+  ensureExportsDir();
+  startWebPanel();
 
   try {
     await refreshMetaPanel(client);
+    scheduleCooldownPanelRefresh();
     console.log("Panel de meta actualizado.");
   } catch (error) {
     console.error("Error actualizando panel de meta:", error);
@@ -427,6 +473,7 @@ client.on(Events.InteractionCreate, async interaction => {
           ].join("\n"),
           flags: MessageFlags.Ephemeral
         });
+
         return;
       }
 
@@ -438,6 +485,7 @@ client.on(Events.InteractionCreate, async interaction => {
           content: `${user} tiene **${total}** tiradas históricas.`,
           flags: MessageFlags.Ephemeral
         });
+
         return;
       }
 
@@ -450,15 +498,18 @@ client.on(Events.InteractionCreate, async interaction => {
             content: "El mes debe estar entre 1 y 12.",
             flags: MessageFlags.Ephemeral
           });
+
           return;
         }
 
         const rows = db.getByMonth(anio, mes);
+        const total = rows.reduce((acc, row) => acc + Number(row.conteo || 0), 0);
 
         await interaction.reply({
-          content: `Mes ${mes}/${anio}: **${sumRegistros(rows)}** tiradas.`,
+          content: `En **${mes}/${anio}** hay **${total}** tiradas registradas.`,
           flags: MessageFlags.Ephemeral
         });
+
         return;
       }
 
@@ -466,50 +517,31 @@ client.on(Events.InteractionCreate, async interaction => {
         const anio = interaction.options.getInteger("anio", true);
         const semana = interaction.options.getInteger("semana", true);
         const rows = db.getByWeek(anio, semana);
+        const total = rows.reduce((acc, row) => acc + Number(row.conteo || 0), 0);
 
         await interaction.reply({
-          content: `Semana ${semana} de ${anio}: **${sumRegistros(rows)}** tiradas.`,
+          content: `En la semana **${semana}/${anio}** hay **${total}** tiradas registradas.`,
           flags: MessageFlags.Ephemeral
         });
+
         return;
       }
 
-      if (interaction.commandName === "tiradas_rango") {
-        const desde = interaction.options.getString("desde", true);
-        const hasta = interaction.options.getString("hasta", true);
-
-        const fromIso = `${desde}T00:00:00.000Z`;
-        const toIso = `${hasta}T23:59:59.999Z`;
-
-        const rows = db.getByRange(fromIso, toIso);
-
-        await interaction.reply({
-          content: `Desde ${desde} hasta ${hasta}: **${sumRegistros(rows)}** tiradas.`,
-          flags: MessageFlags.Ephemeral
-        });
-        return;
-      }
-
-      if (interaction.commandName === "top_tiradas") {
+      if (interaction.commandName === "top") {
         const limite = interaction.options.getInteger("limite") || 10;
         const top = db.getTopUsers(limite);
 
-        if (!top.length) {
-          await interaction.reply({
-            content: "No hay tiradas registradas todavía.",
-            flags: MessageFlags.Ephemeral
-          });
-          return;
-        }
-
-        const texto = top
-          .map((item, index) => `${index + 1}. **${item.display_name || item.username}** — ${item.total}`)
-          .join("\n");
+        const texto = top.length
+          ? top
+              .map((item, index) => `${index + 1}. **${item.display_name || item.username}** — ${item.total}`)
+              .join("\n")
+          : "No hay tiradas registradas.";
 
         await interaction.reply({
           content: `Top ${limite} histórico:\n${texto}`,
           flags: MessageFlags.Ephemeral
         });
+
         return;
       }
 
@@ -524,12 +556,14 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.editReply({
             content: "No hay datos para exportar."
           });
+
           return;
         }
 
+        ensureExportsDir();
+
         const worksheet = XLSX.utils.json_to_sheet(rows);
         const workbook = XLSX.utils.book_new();
-
         XLSX.utils.book_append_sheet(workbook, worksheet, "Tiradas");
 
         const fileName = `tiradas_${Date.now()}.xlsx`;
@@ -541,6 +575,7 @@ client.on(Events.InteractionCreate, async interaction => {
           content: "Excel generado correctamente.",
           files: [filePath]
         });
+
         return;
       }
 
@@ -598,19 +633,9 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
-const app = createWebApp({ client });
-const port = Number(process.env.PORT || 3000);
-
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Panel web escuchando en puerto ${port}`);
-});
-
-process.on("unhandledRejection", error => {
-  console.error("Unhandled Rejection:", error);
-});
-
-process.on("uncaughtException", error => {
-  console.error("Uncaught Exception:", error);
-});
+if (!process.env.DISCORD_TOKEN) {
+  console.error("Falta DISCORD_TOKEN en las variables de entorno.");
+  process.exit(1);
+}
 
 client.login(process.env.DISCORD_TOKEN);
