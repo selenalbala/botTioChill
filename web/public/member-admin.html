@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cuentas de miembros · Tío Chill MC</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">🔐</div>
+      <div>
+        <p class="mini-title">TÍO CHILL MC · STAFF</p>
+        <h1>Cuentas de miembros</h1>
+        <span>Crear usuarios y contraseñas para que cada miembro vea su meta</span>
+      </div>
+    </div>
+
+    <a href="/" class="button-link btn-secondary">Volver al panel</a>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <div class="card-title">
+        <div>
+          <p class="mini-title">NUEVA / EDITAR</p>
+          <h2>Acceso de miembro</h2>
+        </div>
+
+        <span class="badge">Privado</span>
+      </div>
+
+      <div class="filters member-admin-grid">
+        <label>
+          Miembro detectado
+          <select id="memberSelect">
+            <option value="">Selecciona usuario</option>
+          </select>
+        </label>
+
+        <label>
+          Discord ID
+          <input id="discordUserId" placeholder="ID de Discord" />
+        </label>
+
+        <label>
+          Usuario web
+          <input id="webUsername" placeholder="usuario" />
+        </label>
+
+        <label>
+          Contraseña nueva
+          <input id="plainPassword" placeholder="mínimo 6 caracteres" />
+        </label>
+
+        <label>
+          Estado
+          <select id="active">
+            <option value="1">Activo</option>
+            <option value="0">Desactivado</option>
+          </select>
+        </label>
+
+        <label>
+          Aviso por MD
+          <select id="notify">
+            <option value="1">Enviar usuario/contraseña por MD</option>
+            <option value="0">No enviar MD</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="quick-buttons">
+        <button id="saveAccount" type="button">Guardar cuenta</button>
+        <button id="generatePassword" type="button" class="btn-secondary">Generar contraseña</button>
+      </div>
+
+      <p class="status-message" id="statusMessage"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-title">
+        <div>
+          <p class="mini-title">CUENTAS</p>
+          <h2>Miembros con acceso</h2>
+        </div>
+      </div>
+
+      <div id="accountsList" class="review-list"></div>
+    </section>
+  </main>
+
+  <script src="/static/member-admin.js"></script>
+</body>
+</html>
