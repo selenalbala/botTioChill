@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mi Meta · Tío Chill MC</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="brand login-brand">
+      <div class="brand-icon">🏍️</div>
+      <div>
+        <p class="mini-title">TÍO CHILL MC · MIEMBROS</p>
+        <h1>Mi meta</h1>
+        <span>Acceso privado para ver tus tiradas</span>
+      </div>
+    </div>
+
+    <form method="post" action="/mi-meta/login" class="login-form">
+      <label>
+        Usuario
+        <input name="username" autocomplete="username" required />
+      </label>
+
+      <label>
+        Contraseña
+        <input type="password" name="password" autocomplete="current-password" required />
+      </label>
+
+      <button type="submit">Entrar</button>
+    </form>
+
+    <p class="status-message error" id="loginError"></p>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    if (params.get("error") === "1") {
+      document.getElementById("loginError").textContent = "Usuario o contraseña incorrectos.";
+    }
+  </script>
+</body>
+</html>
