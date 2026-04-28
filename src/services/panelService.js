@@ -43,58 +43,55 @@ function buildNextTiradaText(channelId = TARGET_CHANNEL_ID) {
   const last = db.getLastButtonTiradaGlobal(channelId);
 
   if (!last) {
-    return "Siguiente tirada: **disponible ahora**.";
+    return "⏱️ **Siguiente tirada:** disponible ahora.";
   }
 
   const lastMs = new Date(last.timestamp_utc).getTime();
 
   if (Number.isNaN(lastMs)) {
-    return "Siguiente tirada: **disponible ahora**.";
+    return "⏱️ **Siguiente tirada:** disponible ahora.";
   }
 
   const nextMs = lastMs + TIRADA_COOLDOWN_MS;
 
   if (Date.now() >= nextMs) {
-    return "Siguiente tirada: **disponible ahora**.";
+    return "⏱️ **Siguiente tirada:** disponible ahora.";
   }
 
   const unix = Math.floor(nextMs / 1000);
-  const nombre = last.display_name || last.username || "desconocido";
 
-  return `Siguiente tirada: **<t:${unix}:R>** · hora: <t:${unix}:t>\nÚltima tirada registrada por: **${nombre}**.`;
+  return [
+    `⏱️ **Siguiente tirada:** <t:${unix}:R>`,
+    `🕒 **Hora exacta:** <t:${unix}:t>`
+  ].join("\n");
 }
 
 function buildMetaPanelContent(channelId = TARGET_CHANNEL_ID) {
   const state = getMetaState(channelId);
 
   return [
-    "🏍️ **Panel de tiradas**",
+    "🏍️ **Panel de meta de la banda**",
     "",
-    "Pulsa **+1 tirada** para sumar **56 de metanfetamina**.",
+    "Pulsa **+1 tirada** para registrar una tirada de meta.",
+    "",
     buildNextTiradaText(channelId),
     "",
-    `Meta actual: **${state.metaActual}/${META_MAXIMA_PROCESO}**`,
-    `Tiradas actuales: **${state.tiradasPendientes}/${TIRADAS_PARA_PROCESAR}**`,
-    `Cada tirada: **${META_POR_TIRADA}**`,
+    "━━━━━━━━━━━━━━━━━━━━",
+    "",
+    `🧪 **Meta actual:** ${state.metaActual}/${META_MAXIMA_PROCESO}`,
+    `🎲 **Tiradas acumuladas:** ${state.tiradasPendientes}/${TIRADAS_PARA_PROCESAR}`,
+    `➕ **Cada tirada suma:** ${META_POR_TIRADA} de meta`,
     "",
     state.listoParaProcesar
-      ? "✅ Estado de proceso: **listo para procesar**"
-      : `⏳ Estado de proceso: faltan **${state.metaRestante}** de meta.`,
+      ? "✅ **Estado:** listo para procesar."
+      : `⏳ **Estado:** faltan ${state.metaRestante} de meta para procesar.`,
     "",
-    `Meta procesada pendiente de empaquetar: **${state.metaProcesadaPendiente}/${META_PARA_EMPAQUETAR}**`,
+    "━━━━━━━━━━━━━━━━━━━━",
+    "",
+    `📦 **Meta procesada pendiente:** ${state.metaProcesadaPendiente}/${META_PARA_EMPAQUETAR}`,
     state.listoParaEmpaquetar
-      ? "✅ Estado de empaquetado: **listo para empaquetar**"
-      : `📦 Estado de empaquetado: faltan **${state.metaProcesadaRestante}** de meta procesada.`,
-    "",
-    "**Tiradas pendientes por usuario:**",
-    state.porUsuarios.length
-      ? state.porUsuarios
-          .map(row => {
-            const tiradas = Number(row.tiradas_pendientes || 0);
-            return `- **${row.display_name || row.username}**: ${tiradas} tirada(s) · ${tiradas * META_POR_TIRADA} de meta`;
-          })
-          .join("\n")
-      : "No hay tiradas pendientes."
+      ? "✅ **Empaquetado:** listo para empaquetar."
+      : `⏳ **Empaquetado:** faltan ${state.metaProcesadaRestante} de meta procesada.`
   ].join("\n");
 }
 
@@ -112,7 +109,7 @@ async function findExistingPanelMessage(channel, clientUserId) {
 
   const existing = messages.find(message => {
     if (clientUserId && message.author?.id !== clientUserId) return false;
-    return String(message.content || "").includes("Panel de tiradas");
+    return String(message.content || "").includes("Panel de meta de la banda");
   });
 
   return existing || null;
