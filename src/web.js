@@ -6,27 +6,19 @@ const express = require("express");
 const session = require("express-session");
 const XLSX = require("xlsx");
 
-const {
-  TARGET_CHANNEL_ID
-} = require("./config");
-
+const { TARGET_CHANNEL_ID } = require("./config");
 const db = require("./db");
-
-const {
-  getMetaState,
-  setCurrentMeta,
-  getLocalParts,
-  getIsoWeekFromParts
-} = require("./services/metaService");
-
+const { getMetaState, setCurrentMeta, getLocalParts, getIsoWeekFromParts } = require("./services/metaService");
 const { refreshMetaPanel } = require("./services/panelService");
 const { logAction } = require("./services/actionLogService");
 const { getComplianceForGuild } = require("./services/complianceService");
-
+const { acceptReviewFromWeb, denyReviewFromWeb } = require("./services/roleReviewService");
 const {
-  acceptReviewFromWeb,
-  denyReviewFromWeb
-} = require("./services/roleReviewService");
+  setMemberAccount,
+  validateMemberLogin,
+  getMemberPrivateStats,
+  sendMemberCredentialsDm
+} = require("./services/memberAuthService");
 
 const TIMEZONE = process.env.TIMEZONE || "Europe/Madrid";
 
@@ -82,7 +74,6 @@ function createWebApp({ client } = {}) {
   app.set("trust proxy", 1);
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
-
   app.use(session({
     secret: process.env.SESSION_SECRET || "cambia-esto",
     resave: false,
@@ -97,6 +88,7 @@ function createWebApp({ client } = {}) {
   }));
 
   const publicDir = path.join(__dirname, "..", "web", "public");
+
   app.use("/static", express.static(publicDir));
 
   function requireAuth(req, res, next) {
@@ -113,6 +105,20 @@ function createWebApp({ client } = {}) {
     });
   }
 
+  function requireMemberAuth(req, res, next) {
+    if (req.session?.memberAuthenticated && req.session?.memberUserId) return next();
+    return res.redirect("/mi-meta/login");
+  }
+
+  function requireMemberApiAuth(req, res, next) {
+    if (req.session?.memberAuthenticated && req.session?.memberUserId) return next();
+
+    return res.status(401).json({
+      ok: false,
+      error: "Sesión caducada. Vuelve a iniciar sesión."
+    });
+  }
+
   app.get("/login", (req, res) => {
     res.sendFile(path.join(publicDir, "login.html"));
   });
@@ -120,7 +126,6 @@ function createWebApp({ client } = {}) {
   app.post("/login", (req, res) => {
     const username = String(req.body.username || "").trim();
     const password = String(req.body.password || "").trim();
-
     const expectedUsername = String(process.env.WEB_USERNAME || "staff").trim();
     const expectedPassword = String(process.env.WEB_PASSWORD || "").trim();
 
@@ -164,6 +169,10 @@ function createWebApp({ client } = {}) {
     res.sendFile(path.join(publicDir, "index.html"));
   });
 
+  app.get("/cuentas-miembros", requireAuth, (req, res) => {
+    res.sendFile(path.join(publicDir, "member-admin.html"));
+  });
+
   app.get("/api/dashboard", requireApiAuth, (req, res) => {
     res.json({
       ok: true,
@@ -196,7 +205,6 @@ function createWebApp({ client } = {}) {
       });
     } catch (error) {
       console.error("Error cargando cumplimiento:", error);
-
       res.status(500).json({
         ok: false,
         error: "No se pudo cargar el cumplimiento."
@@ -258,7 +266,6 @@ function createWebApp({ client } = {}) {
       });
     } catch (error) {
       console.error("Error modificando meta:", error);
-
       res.status(400).json({
         ok: false,
         error: error.message
@@ -369,7 +376,6 @@ function createWebApp({ client } = {}) {
   app.post("/api/role-reviews/:id/accept", requireApiAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
-
       const result = await acceptReviewFromWeb(client, id, {
         userId: "panel-web",
         username: req.session.username || "web"
@@ -396,8 +402,63 @@ function createWebApp({ client } = {}) {
         username: req.session.username || "web"
       });
 
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        error: error.message
+      });
+    }
+  });
+
+  app.get("/api/member-accounts", requireApiAuth, (req, res) => {
+    res.json({
+      ok: true,
+      accounts: db.getMemberWebAccounts()
+    });
+  });
+
+  app.post("/api/member-accounts", requireApiAuth, async (req, res) => {
+    try {
+      const discordUserId = String(req.body.discordUserId || "").trim();
+      const webUsername = String(req.body.webUsername || "").trim();
+      const plainPassword = req.body.plainPassword;
+      const active = req.body.active !== false;
+      const notify = req.body.notify === true;
+
+      const account = await setMemberAccount({
+        discordUserId,
+        webUsername,
+        plainPassword,
+        active
+      });
+
+      let dmSent = false;
+
+      if (notify) {
+        dmSent = await sendMemberCredentialsDm(client, {
+          discordUserId,
+          webUsername: account.web_username,
+          plainPassword: String(plainPassword || ""),
+          publicUrl: process.env.PUBLIC_URL
+        });
+      }
+
+      await logAction(client, {
+        guild_id: process.env.GUILD_ID || "panel-web",
+        channel_id: TARGET_CHANNEL_ID,
+        user_id: discordUserId,
+        username: webUsername,
+        display_name: "Cuenta miembro",
+        action_type: "member_account_save",
+        status: "success",
+        details: `Cuenta ${active ? "activada" : "desactivada"}. MD enviado: ${dmSent ? "sí" : "no"}.`
+      });
+
       res.json({
-        ok: true
+        ok: true,
+        account,
+        dmSent
       });
     } catch (error) {
       res.status(400).json({
@@ -405,6 +466,51 @@ function createWebApp({ client } = {}) {
         error: error.message
       });
     }
+  });
+
+  app.get("/mi-meta/login", (req, res) => {
+    res.sendFile(path.join(publicDir, "member-login.html"));
+  });
+
+  app.post("/mi-meta/login", async (req, res) => {
+    const account = await validateMemberLogin(req.body.username, req.body.password);
+
+    if (!account) {
+      return res.redirect("/mi-meta/login?error=1");
+    }
+
+    req.session.memberAuthenticated = true;
+    req.session.memberUserId = account.discord_user_id;
+    req.session.memberUsername = account.web_username;
+
+    req.session.save(error => {
+      if (error) {
+        return res.status(500).send("Error guardando la sesión.");
+      }
+
+      return res.redirect("/mi-meta");
+    });
+  });
+
+  app.post("/mi-meta/logout", (req, res) => {
+    delete req.session.memberAuthenticated;
+    delete req.session.memberUserId;
+    delete req.session.memberUsername;
+
+    req.session.save(() => {
+      res.redirect("/mi-meta/login");
+    });
+  });
+
+  app.get("/mi-meta", requireMemberAuth, (req, res) => {
+    res.sendFile(path.join(publicDir, "member.html"));
+  });
+
+  app.get("/api/mi-meta", requireMemberApiAuth, (req, res) => {
+    res.json({
+      ok: true,
+      me: getMemberPrivateStats(req.session.memberUserId)
+    });
   });
 
   app.get("/api/export", requireApiAuth, (req, res) => {
@@ -425,7 +531,6 @@ function createWebApp({ client } = {}) {
 
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
-
     XLSX.utils.book_append_sheet(workbook, worksheet, "Tiradas");
 
     const fileName = `tiradas_panel_${Date.now()}.xlsx`;
@@ -461,7 +566,6 @@ function createWebApp({ client } = {}) {
       });
     } catch (error) {
       console.error("Error generando backup de la DB:", error);
-
       res.status(500).json({
         ok: false,
         error: "No se pudo generar el backup de la DB."
