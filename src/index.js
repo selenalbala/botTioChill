@@ -290,8 +290,6 @@ async function handleProcesarButton(interaction) {
     return;
   }
 
-  const repartoUsadoText = buildUserPendingText(TARGET_CHANNEL_ID);
-
   await interaction.deferReply({
     flags: MessageFlags.Ephemeral
   });
@@ -322,21 +320,18 @@ async function handleProcesarButton(interaction) {
 
   await refreshMetaPanel(client);
 
-  await interaction.editReply({
-    content: [
-      "Proceso registrado correctamente.",
-      "",
-      `Se han procesado **${META_MAXIMA_PROCESO}** de metanfetamina.`,
-      `Se han consumido **${TIRADAS_PARA_PROCESAR}** tiradas pendientes.`,
-      "",
-      "**Reparto de tiradas usadas:**",
-      repartoUsadoText,
-      "",
-      buildPackagingStatusText(TARGET_CHANNEL_ID),
-      "",
-      "Ahora se puede pulsar **Empaquetar** si hay suficiente meta procesada."
-    ].join("\n")
-  });
+await interaction.editReply({
+  content: [
+    "Proceso registrado correctamente.",
+    "",
+    `Se han procesado **${META_MAXIMA_PROCESO}** de metanfetamina.`,
+    `Se han consumido **${TIRADAS_PARA_PROCESAR}** tiradas pendientes.`,
+    "",
+    buildPackagingStatusText(TARGET_CHANNEL_ID),
+    "",
+    "Ahora se puede pulsar **Empaquetar** si hay suficiente meta procesada."
+  ].join("\n")
+});
 }
 
 async function handleEmpaquetarButton(interaction) {
