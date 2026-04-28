@@ -186,31 +186,32 @@ function createWebApp({ client } = {}) {
     });
   });
 
-  app.get("/api/compliance", requireApiAuth, async (req, res) => {
-    try {
-      const guild = await getMainGuild(client);
+app.get("/api/compliance", requireApiAuth, async (req, res) => {
+  try {
+    const guild = await getMainGuild(client);
 
-      if (!guild) {
-        return res.status(500).json({
-          ok: false,
-          error: "No se pudo encontrar el servidor."
-        });
-      }
-
-      const compliance = await getComplianceForGuild(guild);
-
-      res.json({
-        ok: true,
-        compliance
-      });
-    } catch (error) {
-      console.error("Error cargando cumplimiento:", error);
-      res.status(500).json({
+    if (!guild) {
+      return res.status(500).json({
         ok: false,
-        error: "No se pudo cargar el cumplimiento."
+        error: "No se pudo encontrar el servidor. Revisa GUILD_ID y que el bot esté dentro del servidor."
       });
     }
-  });
+
+    const compliance = await getComplianceForGuild(guild);
+
+    res.json({
+      ok: true,
+      compliance
+    });
+  } catch (error) {
+    console.error("Error cargando cumplimiento:", error);
+
+    res.status(500).json({
+      ok: false,
+      error: error.message || "No se pudo cargar el cumplimiento."
+    });
+  }
+});
 
   app.get("/api/tiradas", requireApiAuth, (req, res) => {
     const rows = db.getFilteredTiradas({
