@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mi Meta · Tío Chill MC</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">🏍️</div>
+      <div>
+        <p class="mini-title">TÍO CHILL MC · MIEMBROS</p>
+        <h1>Mi meta</h1>
+        <span id="memberName">Cargando...</span>
+      </div>
+    </div>
+
+    <form method="post" action="/mi-meta/logout">
+      <button class="btn-secondary" type="submit">Cerrar sesión</button>
+    </form>
+  </header>
+
+  <main class="container member-container">
+    <section class="stats-grid">
+      <article class="stat-card">
+        <span>Total histórico</span>
+        <strong id="total">0</strong>
+      </article>
+
+      <article class="stat-card">
+        <span>Hoy</span>
+        <strong id="today">0/2</strong>
+      </article>
+
+      <article class="stat-card">
+        <span>Semana</span>
+        <strong id="week">0/14</strong>
+      </article>
+
+      <article class="stat-card">
+        <span>Meta pendiente</span>
+        <strong id="pendingMeta">0</strong>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="card-title">
+        <div>
+          <p class="mini-title">ESTADO</p>
+          <h2>Resumen personal</h2>
+        </div>
+
+        <span id="statusBadge" class="badge">Cargando</span>
+      </div>
+
+      <div class="meta-stats">
+        <div>
+          <span>Tiradas pendientes de procesar</span>
+          <strong id="pendingTiradas">0</strong>
+        </div>
+
+        <div>
+          <span>Meta generada pendiente</span>
+          <strong id="pendingMetaBox">0</strong>
+        </div>
+
+        <div>
+          <span>Siguiente tirada</span>
+          <strong id="nextTirada">-</strong>
+        </div>
+      </div>
+
+      <p class="help" id="lastUser"></p>
+
+      <button id="refreshBtn" type="button">Actualizar</button>
+
+      <p class="status-message" id="statusMessage"></p>
+    </section>
+  </main>
+
+  <script src="/static/member.js"></script>
+</body>
+</html>
