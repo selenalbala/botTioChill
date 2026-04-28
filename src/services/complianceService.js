@@ -25,7 +25,9 @@ function getMemberRoleIds(member) {
 }
 
 function memberHasAllowedRole(member) {
-  return getMemberRoleIds(member).some(roleId => ALLOWED_TIRADA_ROLE_ID_SET.has(roleId));
+  return getMemberRoleIds(member).some(roleId =>
+    ALLOWED_TIRADA_ROLE_ID_SET.has(String(roleId))
+  );
 }
 
 function memberHasDeleteReviewRole(member) {
@@ -81,20 +83,93 @@ function rowsToMap(rows) {
   return map;
 }
 
-async function fetchAllGuildMembers(guild) {
-  try {
-    await guild.members.fetch({
-      withPresences: false,
-      force: true
-    });
-  } catch (error) {
-    console.error("No se pudieron cargar todos los miembros del servidor:", error);
-    throw new Error(
-      "No se pudieron cargar todos los miembros del servidor. Revisa que SERVER MEMBERS INTENT esté activado en Discord Developer Portal."
-    );
+function compareSnowflakes(a, b) {
+  const aa = BigInt(a);
+  const bb = BigInt(b);
+
+  if (aa < bb) return -1;
+  if (aa > bb) return 1;
+  return 0;
+}
+
+async function fetchMembersWithGateway(guild) {
+  const collection = await guild.members.fetch({
+    withPresences: false,
+    time: 30000
+  });
+
+  return [...collection.values()];
+}
+
+async function fetchMembersWithRestList(guild) {
+  if (typeof guild.members.list !== "function") {
+    return [];
   }
 
-  return [...guild.members.cache.values()];
+  const all = new Map();
+  let after = "0";
+
+  for (let i = 0; i < 30; i++) {
+    const page = await guild.members.list({
+      limit: 1000,
+      after
+    });
+
+    if (!page || page.size === 0) break;
+
+    for (const [id, member] of page) {
+      all.set(id, member);
+    }
+
+    const ids = [...page.keys()].sort(compareSnowflakes);
+    after = ids[ids.length - 1];
+
+    if (page.size < 1000) break;
+  }
+
+  return [...all.values()];
+}
+
+async function fetchAllGuildMembers(guild) {
+  const errors = [];
+
+  try {
+    const members = await fetchMembersWithGateway(guild);
+
+    if (members.length > 0) {
+      return {
+        members,
+        method: "gateway_fetch",
+        errors
+      };
+    }
+  } catch (error) {
+    errors.push(`gateway_fetch: ${error.message}`);
+    console.error("Error usando guild.members.fetch():", error);
+  }
+
+  try {
+    const members = await fetchMembersWithRestList(guild);
+
+    if (members.length > 0) {
+      return {
+        members,
+        method: "rest_list",
+        errors
+      };
+    }
+  } catch (error) {
+    errors.push(`rest_list: ${error.message}`);
+    console.error("Error usando guild.members.list():", error);
+  }
+
+  const cachedMembers = [...guild.members.cache.values()];
+
+  return {
+    members: cachedMembers,
+    method: "cache_fallback",
+    errors
+  };
 }
 
 async function getComplianceForGuild(guild) {
@@ -102,10 +177,10 @@ async function getComplianceForGuild(guild) {
     throw new Error("No se ha recibido el servidor de Discord.");
   }
 
-  const allMembers = await fetchAllGuildMembers(guild);
+  const loaded = await fetchAllGuildMembers(guild);
+  const allMembers = loaded.members;
 
   const humanMembers = allMembers.filter(member => !member.user?.bot);
-
   const members = humanMembers.filter(memberHasAllowedRole);
 
   const today = getLocalYmd(new Date(), TIMEZONE);
@@ -156,6 +231,8 @@ async function getComplianceForGuild(guild) {
     debug: {
       guild_id: guild.id,
       guild_name: guild.name,
+      load_method: loaded.method,
+      load_errors: loaded.errors,
       total_members_loaded: allMembers.length,
       total_human_members: humanMembers.length,
       total_allowed_members: users.length,
