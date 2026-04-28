@@ -1,6 +1,7 @@
 let users = [];
 let complianceUsers = [];
 let accounts = [];
+let complianceDebug = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -13,6 +14,9 @@ function escapeHtml(value) {
 
 function setStatus(message, type = "") {
   const el = document.getElementById("statusMessage");
+
+  if (!el) return;
+
   el.textContent = message || "";
   el.className = `status-message ${type}`.trim();
 }
@@ -42,38 +46,69 @@ function mergeMembers() {
   const map = new Map();
 
   for (const user of users) {
+    if (!user?.user_id) continue;
+
     map.set(user.user_id, {
       user_id: user.user_id,
       username: user.username,
       display_name: user.display_name,
-      total: user.total || 0
+      total: Number(user.total || 0),
+      source: "database"
     });
   }
 
   for (const user of complianceUsers) {
+    if (!user?.user_id) continue;
+
     if (!map.has(user.user_id)) {
       map.set(user.user_id, {
         user_id: user.user_id,
         username: user.username,
         display_name: user.display_name,
-        total: user.week_count || 0
+        total: Number(user.week_count || 0),
+        source: "discord"
+      });
+    } else {
+      const existing = map.get(user.user_id);
+
+      map.set(user.user_id, {
+        ...existing,
+        username: existing.username || user.username,
+        display_name: existing.display_name || user.display_name,
+        source: "database_discord"
       });
     }
   }
 
   return [...map.values()].sort((a, b) =>
-    (a.display_name || a.username || "").localeCompare(b.display_name || b.username || "")
+    String(a.display_name || a.username || "").localeCompare(
+      String(b.display_name || b.username || "")
+    )
   );
 }
 
 function fillMemberSelect() {
   const select = document.getElementById("memberSelect");
+
   select.innerHTML = `<option value="">Selecciona usuario</option>`;
 
-  for (const user of mergeMembers()) {
+  const members = mergeMembers();
+
+  for (const user of members) {
     const option = document.createElement("option");
+
     option.value = user.user_id;
     option.textContent = `${user.display_name || user.username || user.user_id} · ${user.user_id}`;
+
+    select.appendChild(option);
+  }
+
+  if (!members.length) {
+    const option = document.createElement("option");
+
+    option.value = "";
+    option.textContent = "No se encontraron miembros con roles permitidos";
+
     select.appendChild(option);
   }
 }
@@ -120,15 +155,48 @@ function generatePassword() {
   document.getElementById("plainPassword").value = text;
 }
 
+function buildUsernameFromMember(user) {
+  return String(user.username || user.display_name || user.user_id || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll(" ", "_")
+    .replace(/[^\w.-]/g, "");
+}
+
+function renderLoadSummary() {
+  const members = mergeMembers();
+
+  if (complianceDebug) {
+    setStatus(
+      `Miembros cargados: ${members.length}. Humanos en servidor: ${complianceDebug.total_human_members}. Con roles permitidos: ${complianceDebug.total_allowed_members}.`,
+      "ok"
+    );
+  } else {
+    setStatus(`Miembros cargados: ${members.length}.`, "ok");
+  }
+}
+
 async function load() {
+  setStatus("Cargando miembros...", "");
+
   const dashboard = await fetchJson("/api/dashboard");
   users = dashboard.users || [];
 
   try {
     const compliance = await fetchJson("/api/compliance");
+
     complianceUsers = compliance.compliance?.users || [];
-  } catch (_) {
+    complianceDebug = compliance.compliance?.debug || null;
+  } catch (error) {
     complianceUsers = [];
+    complianceDebug = null;
+
+    console.error("Error cargando miembros del servidor:", error);
+
+    setStatus(
+      "No se pudieron cargar todos los miembros del servidor. Revisa SERVER MEMBERS INTENT, GUILD_ID y los roles permitidos.",
+      "error"
+    );
   }
 
   const accountData = await fetchJson("/api/member-accounts");
@@ -136,6 +204,10 @@ async function load() {
 
   fillMemberSelect();
   renderAccounts();
+
+  if (complianceUsers.length) {
+    renderLoadSummary();
+  }
 }
 
 function bindEvents() {
@@ -146,10 +218,7 @@ function bindEvents() {
     if (!user) return;
 
     document.getElementById("discordUserId").value = user.user_id;
-    document.getElementById("webUsername").value =
-      (user.username || user.display_name || user.user_id)
-        .toLowerCase()
-        .replaceAll(" ", "_");
+    document.getElementById("webUsername").value = buildUsernameFromMember(user);
   });
 
   document.getElementById("generatePassword").addEventListener("click", generatePassword);
