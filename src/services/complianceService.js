@@ -1,6 +1,7 @@
 const {
   TARGET_CHANNEL_ID,
   TIMEZONE,
+  ALLOWED_TIRADA_ROLE_IDS,
   ALLOWED_TIRADA_ROLE_ID_SET,
   DELETE_REVIEW_ROLE_ID,
   DAILY_REQUIRED_TIRADAS,
@@ -45,7 +46,9 @@ function getLocalYmd(date = new Date(), timeZone = TIMEZONE) {
 function addDaysToYmd(ymd, days) {
   const [year, month, day] = ymd.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
+
   date.setUTCDate(date.getUTCDate() + days);
+
   return date.toISOString().slice(0, 10);
 }
 
@@ -78,12 +81,32 @@ function rowsToMap(rows) {
   return map;
 }
 
-async function getComplianceForGuild(guild) {
-  await guild.members.fetch();
+async function fetchAllGuildMembers(guild) {
+  try {
+    await guild.members.fetch({
+      withPresences: false,
+      force: true
+    });
+  } catch (error) {
+    console.error("No se pudieron cargar todos los miembros del servidor:", error);
+    throw new Error(
+      "No se pudieron cargar todos los miembros del servidor. Revisa que SERVER MEMBERS INTENT esté activado en Discord Developer Portal."
+    );
+  }
 
-  const members = [...guild.members.cache.values()]
-    .filter(member => !member.user.bot)
-    .filter(memberHasAllowedRole);
+  return [...guild.members.cache.values()];
+}
+
+async function getComplianceForGuild(guild) {
+  if (!guild) {
+    throw new Error("No se ha recibido el servidor de Discord.");
+  }
+
+  const allMembers = await fetchAllGuildMembers(guild);
+
+  const humanMembers = allMembers.filter(member => !member.user?.bot);
+
+  const members = humanMembers.filter(memberHasAllowedRole);
 
   const today = getLocalYmd(new Date(), TIMEZONE);
   const week = getCurrentWeekRange(TIMEZONE);
@@ -103,7 +126,9 @@ async function getComplianceForGuild(guild) {
     return {
       user_id: member.id,
       username: member.user.username,
-      display_name: member.displayName,
+      display_name: member.displayName || member.user.globalName || member.user.username,
+      avatar_url: member.user.displayAvatarURL?.() || null,
+      role_ids: getMemberRoleIds(member),
       today_count: todayCount,
       week_count: weekCount,
       daily_required: DAILY_REQUIRED_TIRADAS,
@@ -116,7 +141,10 @@ async function getComplianceForGuild(guild) {
   users.sort((a, b) => {
     if (a.daily_ok !== b.daily_ok) return a.daily_ok ? 1 : -1;
     if (a.weekly_ok !== b.weekly_ok) return a.weekly_ok ? 1 : -1;
-    return a.display_name.localeCompare(b.display_name);
+
+    return String(a.display_name || a.username || "").localeCompare(
+      String(b.display_name || b.username || "")
+    );
   });
 
   return {
@@ -124,7 +152,15 @@ async function getComplianceForGuild(guild) {
     weeklyRequired: WEEKLY_REQUIRED_TIRADAS,
     today,
     week,
-    users
+    users,
+    debug: {
+      guild_id: guild.id,
+      guild_name: guild.name,
+      total_members_loaded: allMembers.length,
+      total_human_members: humanMembers.length,
+      total_allowed_members: users.length,
+      allowed_role_ids: ALLOWED_TIRADA_ROLE_IDS
+    }
   };
 }
 
@@ -133,6 +169,7 @@ module.exports = {
   memberHasAllowedRole,
   memberHasDeleteReviewRole,
   getLocalYmd,
+  addDaysToYmd,
   getCurrentWeekRange,
   getComplianceForGuild
 };
