@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>TÍO CHILL MC · Acceso</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/panel.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="brand-mark">🏍️</div>
+    <h1>TÍO CHILL MC</h1>
+    <p>Acceso al panel de salidas, calendario y miembros.</p>
+
+    <form id="loginForm" class="form-stack">
+      <label>
+        Usuario
+        <input id="username" name="username" autocomplete="username" required>
+      </label>
+
+      <label>
+        Contraseña
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </label>
+
+      <button type="submit">Entrar</button>
+      <p id="loginError" class="message error" hidden></p>
+    </form>
+
+    <a class="muted-link" href="/login">Ir al panel antiguo de tiradas</a>
+  </main>
+
+  <script>
+    const form = document.getElementById("loginForm");
+    const errorBox = document.getElementById("loginError");
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      errorBox.hidden = true;
+      errorBox.textContent = "";
+
+      try {
+        const res = await fetch("/api/panel/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: document.getElementById("username").value,
+            password: document.getElementById("password").value
+          })
+        });
+
+        const data = await res.json().catch(() => ({ ok: false, error: "Respuesta no válida." }));
+        if (!res.ok || !data.ok) throw new Error(data.error || "No se pudo iniciar sesión.");
+
+        window.location.href = "/panel";
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+      }
+    });
+  </script>
+</body>
+</html>

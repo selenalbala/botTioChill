@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>TÍO CHILL MC · Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
+  <link rel="stylesheet" href="/static/panel.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">🏍️</div>
+        <div>
+          <strong>TÍO CHILL MC</strong>
+          <span>Panel interno</span>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-tab="calendarTab">📅 Calendario</button>
+        <button class="nav-item" data-tab="salidasTab">🏍️ Salidas</button>
+        <button class="nav-item boss-only" data-tab="usersTab">👥 Miembros</button>
+        <a class="nav-link boss-only" href="/" target="_blank">📊 Panel tiradas</a>
+        <a class="nav-link boss-only" href="/cuentas-miembros" target="_blank">🔐 Cuentas miembros</a>
+      </nav>
+
+      <div class="user-card">
+        <div id="currentDisplayName">Cargando...</div>
+        <small id="currentRole">-</small>
+      </div>
+
+      <button id="logoutBtn" class="ghost danger">Cerrar sesión</button>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="pageTitle">Calendario de salidas</h1>
+          <p id="pageSubtitle">Todos pueden ver las salidas y votar si van o no.</p>
+        </div>
+        <button id="openCreateSalidaBtn" class="boss-only primary">+ Crear salida</button>
+      </header>
+
+      <div id="statusMessage" class="status"></div>
+
+      <section id="calendarTab" class="tab active">
+        <div class="card">
+          <div id="calendar"></div>
+        </div>
+      </section>
+
+      <section id="salidasTab" class="tab">
+        <div class="grid two">
+          <div class="card">
+            <div class="card-title">
+              <h2>Próximas salidas</h2>
+              <button id="refreshSalidasBtn" class="ghost">Actualizar</button>
+            </div>
+            <div id="salidasList" class="salidas-list"></div>
+          </div>
+
+          <div class="card">
+            <h2>Detalle</h2>
+            <div id="salidaDetail" class="empty-state">
+              Selecciona una salida del calendario o de la lista.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="usersTab" class="tab">
+        <div class="grid two">
+          <div class="card">
+            <h2>Crear / editar usuario</h2>
+            <form id="userForm" class="form-grid">
+              <input type="hidden" id="userId">
+
+              <label>
+                Usuario web
+                <input id="userUsername" placeholder="ej: pepe" required>
+              </label>
+
+              <label>
+                Nombre visible
+                <input id="userDisplayName" placeholder="ej: Pepe">
+              </label>
+
+              <label>
+                ID Discord
+                <input id="userDiscordId" placeholder="opcional">
+              </label>
+
+              <label>
+                Rol
+                <select id="userRole">
+                  <option value="member">Miembro</option>
+                  <option value="staff">Staff</option>
+                  <option value="boss">Jefe</option>
+                </select>
+              </label>
+
+              <label>
+                Contraseña
+                <input id="userPassword" type="password" placeholder="mínimo 6 caracteres">
+              </label>
+
+              <label class="checkbox-line">
+                <input id="userActive" type="checkbox" checked>
+                Activo
+              </label>
+
+              <div class="form-actions">
+                <button type="submit" class="primary">Guardar usuario</button>
+                <button type="button" id="clearUserFormBtn" class="ghost">Limpiar</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <h2>Miembros web</h2>
+              <button id="refreshUsersBtn" class="ghost">Actualizar</button>
+            </div>
+            <div id="usersTable"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="salidaDialog" class="dialog">
+    <form id="salidaForm" method="dialog" class="form-stack">
+      <div class="dialog-title">
+        <h2 id="salidaDialogTitle">Crear salida</h2>
+        <button type="button" id="closeSalidaDialogBtn" class="icon-btn">×</button>
+      </div>
+
+      <input type="hidden" id="salidaId">
+
+      <label>
+        Título
+        <input id="salidaTitle" maxlength="120" required placeholder="Ruta por Sandy Shores">
+      </label>
+
+      <label>
+        Lugar
+        <input id="salidaLocation" maxlength="180" placeholder="Sede MC">
+      </label>
+
+      <div class="grid two compact">
+        <label>
+          Inicio
+          <input id="salidaStartsAt" type="datetime-local" required>
+        </label>
+
+        <label>
+          Fin
+          <input id="salidaEndsAt" type="datetime-local">
+        </label>
+      </div>
+
+      <label>
+        Descripción
+        <textarea id="salidaDescription" rows="4" maxlength="1000" placeholder="Detalles de la salida..."></textarea>
+      </label>
+
+      <label id="salidaStatusWrap">
+        Estado
+        <select id="salidaStatus">
+          <option value="open">Abierta</option>
+          <option value="closed">Cerrada</option>
+          <option value="cancelled">Cancelada</option>
+        </select>
+      </label>
+
+      <div class="form-actions">
+        <button type="submit" class="primary">Guardar salida</button>
+        <button type="button" id="cancelSalidaBtn" class="ghost danger">Cancelar salida</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="/static/panel.js"></script>
+</body>
+</html>
