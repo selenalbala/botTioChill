@@ -31,7 +31,8 @@ function memberHasAllowedRole(member) {
 }
 
 function memberHasDeleteReviewRole(member) {
-  return getMemberRoleIds(member).includes(DELETE_REVIEW_ROLE_ID);
+  if (!DELETE_REVIEW_ROLE_ID) return false;
+  return getMemberRoleIds(member).includes(String(DELETE_REVIEW_ROLE_ID));
 }
 
 function getLocalYmd(date = new Date(), timeZone = TIMEZONE) {
@@ -92,6 +93,56 @@ function compareSnowflakes(a, b) {
   return 0;
 }
 
+/**
+ * Fallback por Gateway.
+ * Esta llamada puede dar rate limit si se abusa de ella.
+ * Por eso solo se usa como último recurso.
+ */
+async function fetchMembersWithGateway(guild) {
+  const collection = await guild.members.fetch({
+    withPresences: false,
+    time: 30000
+  });
+
+  return [...collection.values()];
+}
+
+/**
+ * Carga miembros por REST paginando.
+ * Es preferible a guild.members.fetch() masivo.
+ */
+async function fetchMembersWithRestList(guild) {
+  if (typeof guild.members.list !== "function") {
+    return [];
+  }
+
+  const all = new Map();
+  let after = "0";
+
+  for (let i = 0; i < 30; i++) {
+    const page = await guild.members.list({
+      limit: 1000,
+      after
+    });
+
+    if (!page || page.size === 0) break;
+
+    for (const [id, member] of page) {
+      all.set(id, member);
+    }
+
+    const ids = [...page.keys()].sort(compareSnowflakes);
+    after = ids[ids.length - 1];
+
+    if (page.size < 1000) break;
+  }
+
+  return [...all.values()];
+}
+
+/**
+ * Caché para no pedir todos los miembros a Discord cada vez que se abre la web.
+ */
 let membersCache = {
   guildId: null,
   members: [],
@@ -102,7 +153,7 @@ let membersCache = {
 
 let pendingMembersFetch = null;
 
-const MEMBERS_CACHE_MS = Number(process.env.MEMBERS_CACHE_MS || 2 * 60 * 1000);
+const MEMBERS_CACHE_MS = Number(process.env.MEMBERS_CACHE_MS || 5 * 60 * 1000);
 
 async function fetchAllGuildMembers(guild, options = {}) {
   const force = options.force === true;
@@ -128,6 +179,9 @@ async function fetchAllGuildMembers(guild, options = {}) {
   pendingMembersFetch = (async () => {
     const errors = [];
 
+    /**
+     * 1. Primero intentamos REST list.
+     */
     try {
       const members = await fetchMembersWithRestList(guild);
 
@@ -151,6 +205,9 @@ async function fetchAllGuildMembers(guild, options = {}) {
       console.error("Error usando guild.members.list():", error);
     }
 
+    /**
+     * 2. Si Discord ya tiene miembros en caché, usamos eso.
+     */
     const cachedMembers = [...guild.members.cache.values()];
 
     if (cachedMembers.length > 0) {
@@ -169,6 +226,10 @@ async function fetchAllGuildMembers(guild, options = {}) {
       };
     }
 
+    /**
+     * 3. Último recurso: Gateway fetch.
+     * Esta era la llamada que te daba rate limit.
+     */
     try {
       const members = await fetchMembersWithGateway(guild);
 
@@ -202,80 +263,6 @@ async function fetchAllGuildMembers(guild, options = {}) {
   } finally {
     pendingMembersFetch = null;
   }
-}
-
-  return [...collection.values()];
-}
-
-async function fetchMembersWithRestList(guild) {
-  if (typeof guild.members.list !== "function") {
-    return [];
-  }
-
-  const all = new Map();
-  let after = "0";
-
-  for (let i = 0; i < 30; i++) {
-    const page = await guild.members.list({
-      limit: 1000,
-      after
-    });
-
-    if (!page || page.size === 0) break;
-
-    for (const [id, member] of page) {
-      all.set(id, member);
-    }
-
-    const ids = [...page.keys()].sort(compareSnowflakes);
-    after = ids[ids.length - 1];
-
-    if (page.size < 1000) break;
-  }
-
-  return [...all.values()];
-}
-
-async function fetchAllGuildMembers(guild) {
-  const errors = [];
-
-  try {
-    const members = await fetchMembersWithGateway(guild);
-
-    if (members.length > 0) {
-      return {
-        members,
-        method: "gateway_fetch",
-        errors
-      };
-    }
-  } catch (error) {
-    errors.push(`gateway_fetch: ${error.message}`);
-    console.error("Error usando guild.members.fetch():", error);
-  }
-
-  try {
-    const members = await fetchMembersWithRestList(guild);
-
-    if (members.length > 0) {
-      return {
-        members,
-        method: "rest_list",
-        errors
-      };
-    }
-  } catch (error) {
-    errors.push(`rest_list: ${error.message}`);
-    console.error("Error usando guild.members.list():", error);
-  }
-
-  const cachedMembers = [...guild.members.cache.values()];
-
-  return {
-    members: cachedMembers,
-    method: "cache_fallback",
-    errors
-  };
 }
 
 async function getComplianceForGuild(guild) {
