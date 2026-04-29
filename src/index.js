@@ -24,7 +24,7 @@ const {
 
 const db = require("./db");
 const { buildTiradaRow } = require("./stats");
-const { createWebApp } = require("./web");
+const { createWebApp } = require("./webPlus");
 const { logAction, actionFromInteraction } = require("./services/actionLogService");
 const {
   getLocalDateText,
