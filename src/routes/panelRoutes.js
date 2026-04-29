@@ -1,4 +1,5 @@
 const path = require("path");
+
 const {
   initPanelAuthTables,
   seedDefaultBossFromEnv,
@@ -11,6 +12,7 @@ const {
   getUserById,
   hasRole
 } = require("../services/panelAuthService");
+
 const {
   initSalidaTables,
   listSalidas,
@@ -37,9 +39,23 @@ function requirePanelApi(req, res, next) {
   return res.status(401).json({ ok: false, error: "Sesión caducada. Vuelve a iniciar sesión." });
 }
 
+function attachCurrentUser(req, res, next) {
+  req.panelUser = getUserById(req.session.panelUserId);
+
+  if (!req.panelUser || !req.panelUser.active) {
+    req.session.panelUserId = null;
+    req.session.panelRole = null;
+    req.session.panelUsername = null;
+    return res.status(401).json({ ok: false, error: "Sesión caducada. Vuelve a iniciar sesión." });
+  }
+
+  return next();
+}
+
 function requireMinimumRole(role) {
   return (req, res, next) => {
-    const user = getUserById(req.session.panelUserId);
+    const user = req.panelUser || getUserById(req.session.panelUserId);
+
     if (!user || !hasRole(user, role)) {
       return res.status(403).json({ ok: false, error: "No tienes permisos para esta acción." });
     }
@@ -49,17 +65,9 @@ function requireMinimumRole(role) {
   };
 }
 
-function attachCurrentUser(req, res, next) {
-  req.panelUser = getUserById(req.session.panelUserId);
-  if (!req.panelUser || !req.panelUser.active) {
-    req.session.panelUserId = null;
-    return res.status(401).json({ ok: false, error: "Sesión caducada. Vuelve a iniciar sesión." });
-  }
-  return next();
-}
-
 function eventToCalendar(salida) {
   const statusText = salida.status === "cancelled" ? "❌ " : salida.status === "closed" ? "🔒 " : "🏍️ ";
+
   return {
     id: String(salida.id),
     title: `${statusText}${salida.title}`,
@@ -74,6 +82,32 @@ function eventToCalendar(salida) {
   };
 }
 
+function mirrorPanelSessionToLegacySessions(req, user) {
+  req.session.panelUserId = user.id;
+  req.session.panelRole = user.role;
+  req.session.panelUsername = user.username;
+
+  // Permite que el panel antiguo de tiradas y cuentas-miembros no pida otro login.
+  if (["boss", "staff"].includes(user.role)) {
+    req.session.authenticated = true;
+    req.session.username = user.username;
+  } else {
+    delete req.session.authenticated;
+    delete req.session.username;
+  }
+
+  // Permite que los miembros entren en /mi-meta sin otro login.
+  if (user.discordUserId) {
+    req.session.memberAuthenticated = true;
+    req.session.memberUserId = user.discordUserId;
+    req.session.memberUsername = user.username;
+  } else {
+    delete req.session.memberAuthenticated;
+    delete req.session.memberUserId;
+    delete req.session.memberUsername;
+  }
+}
+
 async function notifySalidaToDiscord(client, salida, action, actor) {
   const channelId = process.env.SALIDAS_CHANNEL_ID;
   if (!client || !channelId) return false;
@@ -83,7 +117,6 @@ async function notifySalidaToDiscord(client, salida, action, actor) {
 
   const publicUrl = String(process.env.PUBLIC_URL || "").replace(/\/$/, "");
   const panelUrl = publicUrl ? `${publicUrl}/panel` : "/panel";
-
   const actionText = {
     created: "Nueva salida creada",
     updated: "Salida actualizada",
@@ -108,21 +141,22 @@ async function notifySalidaToDiscord(client, salida, action, actor) {
 }
 
 function attachPanelRoutes(app, { client } = {}) {
-initPanelAuthTables();
-initSalidaTables();
+  initPanelAuthTables();
+  initSalidaTables();
 
-seedDefaultBossFromEnv()
-  .then(() => {
-    importMemberWebAccountsIntoPanelUsers();
-  })
-  .catch(error => {
-    console.error("[PANEL] Error creando usuario jefe inicial:", error);
-  });
+  seedDefaultBossFromEnv()
+    .then(() => {
+      importMemberWebAccountsIntoPanelUsers();
+    })
+    .catch(error => {
+      console.error("[PANEL] Error creando usuario jefe inicial:", error);
+    });
 
   const publicDir = getPublicDir();
 
   app.get("/panel/login", (req, res) => {
-    res.sendFile(path.join(publicDir, "panel-login.html"));
+    if (req.session?.panelUserId) return res.redirect("/panel");
+    return res.sendFile(path.join(publicDir, "panel-login.html"));
   });
 
   app.get("/panel", requirePanelPage, (req, res) => {
@@ -140,13 +174,12 @@ seedDefaultBossFromEnv()
   app.post("/api/panel/login", async (req, res) => {
     try {
       const user = await validateLogin(req.body.username, req.body.password);
+
       if (!user) {
         return res.status(401).json({ ok: false, error: "Usuario o contraseña incorrectos." });
       }
 
-      req.session.panelUserId = user.id;
-      req.session.panelRole = user.role;
-      req.session.panelUsername = user.username;
+      mirrorPanelSessionToLegacySessions(req, user);
 
       req.session.save(error => {
         if (error) {
@@ -163,10 +196,7 @@ seedDefaultBossFromEnv()
   });
 
   app.post("/api/panel/logout", requirePanelApi, (req, res) => {
-    req.session.panelUserId = null;
-    req.session.panelRole = null;
-    req.session.panelUsername = null;
-    req.session.save(() => res.json({ ok: true }));
+    req.session.destroy(() => res.json({ ok: true }));
   });
 
   app.get("/api/panel/me", requirePanelApi, attachCurrentUser, (req, res) => {
@@ -188,6 +218,7 @@ seedDefaultBossFromEnv()
         active: req.body.active !== false
       });
 
+      importMemberWebAccountsIntoPanelUsers();
       res.json({ ok: true, user });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
@@ -329,11 +360,7 @@ seedDefaultBossFromEnv()
 
   app.delete("/api/panel/comments/:id", requirePanelApi, attachCurrentUser, (req, res) => {
     try {
-      deleteComment({
-        commentId: req.params.id,
-        requester: req.panelUser
-      });
-
+      deleteComment({ commentId: req.params.id, requester: req.panelUser });
       res.json({ ok: true });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });

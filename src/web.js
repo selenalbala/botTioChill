@@ -13,12 +13,7 @@ const { refreshMetaPanel } = require("./services/panelService");
 const { logAction } = require("./services/actionLogService");
 const { getComplianceForGuild } = require("./services/complianceService");
 const { acceptReviewFromWeb, denyReviewFromWeb } = require("./services/roleReviewService");
-const {
-  setMemberAccount,
-  validateMemberLogin,
-  getMemberPrivateStats,
-  sendMemberCredentialsDm
-} = require("./services/memberAuthService");
+const { setMemberAccount, validateMemberLogin, getMemberPrivateStats, sendMemberCredentialsDm } = require("./services/memberAuthService");
 
 const TIMEZONE = process.env.TIMEZONE || "Europe/Madrid";
 
@@ -44,11 +39,8 @@ function buildManualAdjustmentRow(user, delta) {
 
 function toInteger(value) {
   if (value === null || value === undefined || value === "") return null;
-
   const number = Number(value);
-
   if (!Number.isInteger(number)) return null;
-
   return number;
 }
 
@@ -68,10 +60,23 @@ async function getMainGuild(client) {
   return client.guilds.cache.first() || null;
 }
 
+function isPanelStaffSession(req) {
+  const role = String(req.session?.panelRole || "").toLowerCase();
+  return Boolean(req.session?.panelUserId && ["boss", "staff"].includes(role));
+}
+
+function isPanelMemberSession(req) {
+  return Boolean(req.session?.panelUserId && req.session?.memberUserId);
+}
+
+function getSessionUsername(req) {
+  return req.session?.panelUsername || req.session?.username || req.session?.memberUsername || "web";
+}
+
 function createWebApp({ client } = {}) {
   const app = express();
-
   app.set("trust proxy", 1);
+
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
   app.use(session({
@@ -88,41 +93,34 @@ function createWebApp({ client } = {}) {
   }));
 
   const publicDir = path.join(__dirname, "..", "web", "public");
-
   app.use("/static", express.static(publicDir));
 
   function requireAuth(req, res, next) {
-    if (req.session?.authenticated) return next();
-    return res.redirect("/login");
+    if (req.session?.authenticated || isPanelStaffSession(req)) return next();
+    return res.redirect("/panel/login");
   }
 
   function requireApiAuth(req, res, next) {
-    if (req.session?.authenticated) return next();
-
-    return res.status(401).json({
-      ok: false,
-      error: "Sesión caducada. Vuelve a iniciar sesión."
-    });
+    if (req.session?.authenticated || isPanelStaffSession(req)) return next();
+    return res.status(401).json({ ok: false, error: "Sesión caducada. Vuelve a iniciar sesión." });
   }
 
   function requireMemberAuth(req, res, next) {
-    if (req.session?.memberAuthenticated && req.session?.memberUserId) return next();
-    return res.redirect("/mi-meta/login");
+    if ((req.session?.memberAuthenticated && req.session?.memberUserId) || isPanelMemberSession(req)) return next();
+    return res.redirect("/panel/login");
   }
 
   function requireMemberApiAuth(req, res, next) {
-    if (req.session?.memberAuthenticated && req.session?.memberUserId) return next();
-
-    return res.status(401).json({
-      ok: false,
-      error: "Sesión caducada. Vuelve a iniciar sesión."
-    });
+    if ((req.session?.memberAuthenticated && req.session?.memberUserId) || isPanelMemberSession(req)) return next();
+    return res.status(401).json({ ok: false, error: "Sesión caducada. Vuelve a iniciar sesión." });
   }
 
+  // Login antiguo: ahora redirige al login unificado.
   app.get("/login", (req, res) => {
-    res.sendFile(path.join(publicDir, "login.html"));
+    res.redirect("/panel/login");
   });
 
+  // Se mantiene por compatibilidad, por si alguien tiene guardada la URL antigua.
   app.post("/login", (req, res) => {
     const username = String(req.body.username || "").trim();
     const password = String(req.body.password || "").trim();
@@ -142,26 +140,26 @@ function createWebApp({ client } = {}) {
         longitudPasswordRecibida: password.length,
         longitudPasswordEsperada: expectedPassword.length
       });
-
-      return res.redirect("/login?error=1");
+      return res.redirect("/panel/login?error=1");
     }
 
     req.session.authenticated = true;
     req.session.username = username;
+    req.session.panelUsername = username;
+    req.session.panelRole = "boss";
 
     req.session.save(error => {
       if (error) {
         console.error("Error guardando sesión:", error);
         return res.status(500).send("Error guardando la sesión.");
       }
-
       return res.redirect("/");
     });
   });
 
   app.post("/logout", (req, res) => {
     req.session.destroy(() => {
-      res.redirect("/login");
+      res.redirect("/panel/login");
     });
   });
 
@@ -186,32 +184,21 @@ function createWebApp({ client } = {}) {
     });
   });
 
-app.get("/api/compliance", requireApiAuth, async (req, res) => {
-  try {
-    const guild = await getMainGuild(client);
+  app.get("/api/compliance", requireApiAuth, async (req, res) => {
+    try {
+      const guild = await getMainGuild(client);
 
-    if (!guild) {
-      return res.status(500).json({
-        ok: false,
-        error: "No se pudo encontrar el servidor. Revisa GUILD_ID y que el bot esté dentro del servidor."
-      });
+      if (!guild) {
+        return res.status(500).json({ ok: false, error: "No se pudo encontrar el servidor. Revisa GUILD_ID y que el bot esté dentro del servidor." });
+      }
+
+      const compliance = await getComplianceForGuild(guild);
+      res.json({ ok: true, compliance });
+    } catch (error) {
+      console.error("Error cargando cumplimiento:", error);
+      res.status(500).json({ ok: false, error: error.message || "No se pudo cargar el cumplimiento." });
     }
-
-    const compliance = await getComplianceForGuild(guild);
-
-    res.json({
-      ok: true,
-      compliance
-    });
-  } catch (error) {
-    console.error("Error cargando cumplimiento:", error);
-
-    res.status(500).json({
-      ok: false,
-      error: error.message || "No se pudo cargar el cumplimiento."
-    });
-  }
-});
+  });
 
   app.get("/api/tiradas", requireApiAuth, (req, res) => {
     const rows = db.getFilteredTiradas({
@@ -235,14 +222,11 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
       const metaActual = toInteger(req.body.metaActual);
 
       if (metaActual === null) {
-        return res.status(400).json({
-          ok: false,
-          error: "La meta actual debe ser un número entero."
-        });
+        return res.status(400).json({ ok: false, error: "La meta actual debe ser un número entero." });
       }
 
       const result = setCurrentMeta(metaActual, {
-        username: req.session.username || "web",
+        username: getSessionUsername(req),
         displayName: "Ajuste desde panel web",
         guildId: process.env.GUILD_ID || "panel-web"
       });
@@ -251,7 +235,7 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
         guild_id: process.env.GUILD_ID || "panel-web",
         channel_id: TARGET_CHANNEL_ID,
         user_id: "panel-web",
-        username: req.session.username || "web",
+        username: getSessionUsername(req),
         display_name: "Panel web",
         action_type: "meta_manual_adjust",
         status: "success",
@@ -259,18 +243,10 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
       });
 
       await refreshMetaPanel(client);
-
-      res.json({
-        ok: true,
-        ...result,
-        meta: getMetaState(TARGET_CHANNEL_ID)
-      });
+      res.json({ ok: true, ...result, meta: getMetaState(TARGET_CHANNEL_ID) });
     } catch (error) {
       console.error("Error modificando meta:", error);
-      res.status(400).json({
-        ok: false,
-        error: error.message
-      });
+      res.status(400).json({ ok: false, error: error.message });
     }
   });
 
@@ -279,26 +255,17 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
     const newTotal = toInteger(req.body.total);
 
     if (!userId) {
-      return res.status(400).json({
-        ok: false,
-        error: "Usuario no válido."
-      });
+      return res.status(400).json({ ok: false, error: "Usuario no válido." });
     }
 
     if (newTotal === null || newTotal < 0 || newTotal > 1000000) {
-      return res.status(400).json({
-        ok: false,
-        error: "El total debe ser un número entero entre 0 y 1000000."
-      });
+      return res.status(400).json({ ok: false, error: "El total debe ser un número entero entre 0 y 1000000." });
     }
 
     const user = db.getUserSummary(userId);
 
     if (!user) {
-      return res.status(404).json({
-        ok: false,
-        error: "No se encontró ese usuario."
-      });
+      return res.status(404).json({ ok: false, error: "No se encontró ese usuario." });
     }
 
     const before = Number(db.getTotalByUser(userId));
@@ -320,23 +287,14 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
     });
 
     await refreshMetaPanel(client);
-
-    res.json({
-      ok: true,
-      before,
-      after: Number(db.getTotalByUser(userId)),
-      delta
-    });
+    res.json({ ok: true, before, after: Number(db.getTotalByUser(userId)), delta });
   });
 
   app.delete("/api/users/:userId", requireApiAuth, async (req, res) => {
     const userId = String(req.params.userId || "").trim();
 
     if (!userId) {
-      return res.status(400).json({
-        ok: false,
-        error: "Usuario no válido."
-      });
+      return res.status(400).json({ ok: false, error: "Usuario no válido." });
     }
 
     const user = db.getUserSummary(userId);
@@ -346,7 +304,7 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
       userId,
       status: "accepted",
       resolvedByUserId: "panel-web",
-      resolvedByUsername: req.session.username || "web"
+      resolvedByUsername: getSessionUsername(req)
     });
 
     await logAction(client, {
@@ -360,18 +318,11 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
     });
 
     await refreshMetaPanel(client);
-
-    res.json({
-      ok: true,
-      deletedRows: result.changes
-    });
+    res.json({ ok: true, deletedRows: result.changes });
   });
 
   app.get("/api/role-reviews", requireApiAuth, (req, res) => {
-    res.json({
-      ok: true,
-      reviews: db.getRoleDeleteReviews(req.query.status || "pending")
-    });
+    res.json({ ok: true, reviews: db.getRoleDeleteReviews(req.query.status || "pending") });
   });
 
   app.post("/api/role-reviews/:id/accept", requireApiAuth, async (req, res) => {
@@ -379,44 +330,31 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
       const id = Number(req.params.id);
       const result = await acceptReviewFromWeb(client, id, {
         userId: "panel-web",
-        username: req.session.username || "web"
+        username: getSessionUsername(req)
       });
 
-      res.json({
-        ok: true,
-        deletedRows: result.deletedRows
-      });
+      res.json({ ok: true, deletedRows: result.deletedRows });
     } catch (error) {
-      res.status(400).json({
-        ok: false,
-        error: error.message
-      });
+      res.status(400).json({ ok: false, error: error.message });
     }
   });
 
   app.post("/api/role-reviews/:id/deny", requireApiAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
-
       await denyReviewFromWeb(client, id, {
         userId: "panel-web",
-        username: req.session.username || "web"
+        username: getSessionUsername(req)
       });
 
       res.json({ ok: true });
     } catch (error) {
-      res.status(400).json({
-        ok: false,
-        error: error.message
-      });
+      res.status(400).json({ ok: false, error: error.message });
     }
   });
 
   app.get("/api/member-accounts", requireApiAuth, (req, res) => {
-    res.json({
-      ok: true,
-      accounts: db.getMemberWebAccounts()
-    });
+    res.json({ ok: true, accounts: db.getMemberWebAccounts() });
   });
 
   app.post("/api/member-accounts", requireApiAuth, async (req, res) => {
@@ -427,15 +365,9 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
       const active = req.body.active !== false;
       const notify = req.body.notify === true;
 
-      const account = await setMemberAccount({
-        discordUserId,
-        webUsername,
-        plainPassword,
-        active
-      });
+      const account = await setMemberAccount({ discordUserId, webUsername, plainPassword, active });
 
       let dmSent = false;
-
       if (notify) {
         dmSent = await sendMemberCredentialsDm(client, {
           discordUserId,
@@ -456,28 +388,22 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
         details: `Cuenta ${active ? "activada" : "desactivada"}. MD enviado: ${dmSent ? "sí" : "no"}.`
       });
 
-      res.json({
-        ok: true,
-        account,
-        dmSent
-      });
+      res.json({ ok: true, account, dmSent });
     } catch (error) {
-      res.status(400).json({
-        ok: false,
-        error: error.message
-      });
+      res.status(400).json({ ok: false, error: error.message });
     }
   });
 
+  // Login antiguo de miembros: también redirige al login unificado.
   app.get("/mi-meta/login", (req, res) => {
-    res.sendFile(path.join(publicDir, "member-login.html"));
+    res.redirect("/panel/login");
   });
 
   app.post("/mi-meta/login", async (req, res) => {
     const account = await validateMemberLogin(req.body.username, req.body.password);
 
     if (!account) {
-      return res.redirect("/mi-meta/login?error=1");
+      return res.redirect("/panel/login?error=1");
     }
 
     req.session.memberAuthenticated = true;
@@ -499,7 +425,7 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
     delete req.session.memberUsername;
 
     req.session.save(() => {
-      res.redirect("/mi-meta/login");
+      res.redirect("/panel/login");
     });
   });
 
@@ -508,10 +434,7 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
   });
 
   app.get("/api/mi-meta", requireMemberApiAuth, (req, res) => {
-    res.json({
-      ok: true,
-      me: getMemberPrivateStats(req.session.memberUserId)
-    });
+    res.json({ ok: true, me: getMemberPrivateStats(req.session.memberUserId) });
   });
 
   app.get("/api/export", requireApiAuth, (req, res) => {
@@ -525,7 +448,6 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
     });
 
     const exportDir = path.join(process.cwd(), "exports");
-
     if (!fs.existsSync(exportDir)) {
       fs.mkdirSync(exportDir, { recursive: true });
     }
@@ -536,7 +458,6 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
 
     const fileName = `tiradas_panel_${Date.now()}.xlsx`;
     const filePath = path.join(exportDir, fileName);
-
     XLSX.writeFile(workbook, filePath);
 
     res.download(filePath, fileName, () => {
@@ -547,7 +468,6 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
   app.get("/api/download-db", requireAuth, async (req, res) => {
     try {
       const exportDir = path.join(process.cwd(), "exports");
-
       if (!fs.existsSync(exportDir)) {
         fs.mkdirSync(exportDir, { recursive: true });
       }
@@ -560,23 +480,17 @@ app.get("/api/compliance", requireApiAuth, async (req, res) => {
 
       res.download(filePath, fileName, err => {
         fs.rm(filePath, { force: true }, () => {});
-
         if (err) {
           console.error("Error descargando la DB:", err);
         }
       });
     } catch (error) {
       console.error("Error generando backup de la DB:", error);
-      res.status(500).json({
-        ok: false,
-        error: "No se pudo generar el backup de la DB."
-      });
+      res.status(500).json({ ok: false, error: "No se pudo generar el backup de la DB." });
     }
   });
 
   return app;
 }
 
-module.exports = {
-  createWebApp
-};
+module.exports = { createWebApp };
