@@ -92,11 +92,117 @@ function compareSnowflakes(a, b) {
   return 0;
 }
 
-async function fetchMembersWithGateway(guild) {
-  const collection = await guild.members.fetch({
-    withPresences: false,
-    time: 30000
-  });
+let membersCache = {
+  guildId: null,
+  members: [],
+  method: "empty",
+  errors: [],
+  expiresAt: 0
+};
+
+let pendingMembersFetch = null;
+
+const MEMBERS_CACHE_MS = Number(process.env.MEMBERS_CACHE_MS || 2 * 60 * 1000);
+
+async function fetchAllGuildMembers(guild, options = {}) {
+  const force = options.force === true;
+  const now = Date.now();
+
+  if (
+    !force &&
+    membersCache.guildId === guild.id &&
+    membersCache.members.length > 0 &&
+    membersCache.expiresAt > now
+  ) {
+    return {
+      members: membersCache.members,
+      method: `${membersCache.method}_cache`,
+      errors: membersCache.errors || []
+    };
+  }
+
+  if (!force && pendingMembersFetch) {
+    return pendingMembersFetch;
+  }
+
+  pendingMembersFetch = (async () => {
+    const errors = [];
+
+    try {
+      const members = await fetchMembersWithRestList(guild);
+
+      if (members.length > 0) {
+        membersCache = {
+          guildId: guild.id,
+          members,
+          method: "rest_list",
+          errors,
+          expiresAt: Date.now() + MEMBERS_CACHE_MS
+        };
+
+        return {
+          members,
+          method: "rest_list",
+          errors
+        };
+      }
+    } catch (error) {
+      errors.push(`rest_list: ${error.message}`);
+      console.error("Error usando guild.members.list():", error);
+    }
+
+    const cachedMembers = [...guild.members.cache.values()];
+
+    if (cachedMembers.length > 0) {
+      membersCache = {
+        guildId: guild.id,
+        members: cachedMembers,
+        method: "discord_cache",
+        errors,
+        expiresAt: Date.now() + MEMBERS_CACHE_MS
+      };
+
+      return {
+        members: cachedMembers,
+        method: "discord_cache",
+        errors
+      };
+    }
+
+    try {
+      const members = await fetchMembersWithGateway(guild);
+
+      membersCache = {
+        guildId: guild.id,
+        members,
+        method: "gateway_fetch",
+        errors,
+        expiresAt: Date.now() + MEMBERS_CACHE_MS
+      };
+
+      return {
+        members,
+        method: "gateway_fetch",
+        errors
+      };
+    } catch (error) {
+      errors.push(`gateway_fetch: ${error.message}`);
+      console.error("Error usando guild.members.fetch():", error);
+    }
+
+    return {
+      members: [],
+      method: "empty_fallback",
+      errors
+    };
+  })();
+
+  try {
+    return await pendingMembersFetch;
+  } finally {
+    pendingMembersFetch = null;
+  }
+}
 
   return [...collection.values()];
 }
