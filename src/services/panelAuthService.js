@@ -220,10 +220,96 @@ async function seedDefaultBossFromEnv() {
   return user;
 }
 
+function importMemberWebAccountsIntoPanelUsers() {
+  const rows = db.prepare(`
+    SELECT
+      a.discord_user_id,
+      a.web_username,
+      a.password_hash,
+      a.active,
+      COALESCE(MAX(t.display_name), a.web_username) AS display_name
+    FROM member_web_accounts a
+    LEFT JOIN tiradas t ON t.user_id = a.discord_user_id
+    GROUP BY
+      a.discord_user_id,
+      a.web_username,
+      a.password_hash,
+      a.active
+    ORDER BY a.web_username COLLATE NOCASE ASC
+  `).all();
+
+  const existsStmt = db.prepare(`
+    SELECT id
+    FROM panel_users
+    WHERE username = ?
+       OR (discord_user_id IS NOT NULL AND discord_user_id = ?)
+    LIMIT 1
+  `);
+
+  const insertStmt = db.prepare(`
+    INSERT INTO panel_users (
+      discord_user_id,
+      username,
+      display_name,
+      password_hash,
+      role,
+      active,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, 'member', ?, ?, ?)
+  `);
+
+  let created = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const username = normalizeUsername(row.web_username);
+    const discordUserId = String(row.discord_user_id || "").trim();
+
+    if (!username || !row.password_hash) {
+      skipped++;
+      continue;
+    }
+
+    const existing = existsStmt.get(username, discordUserId || null);
+
+    if (existing) {
+      skipped++;
+      continue;
+    }
+
+    const timestamp = nowIso();
+
+    insertStmt.run(
+      discordUserId || null,
+      username,
+      String(row.display_name || username).trim(),
+      row.password_hash,
+      Number(row.active) === 1 ? 1 : 0,
+      timestamp,
+      timestamp
+    );
+
+    created++;
+  }
+
+  if (created > 0 || rows.length > 0) {
+    console.log(`[PANEL] Importación de miembros: ${created} creados, ${skipped} omitidos.`);
+  }
+
+  return {
+    total: rows.length,
+    created,
+    skipped
+  };
+}
+
 module.exports = {
   ROLES,
   initPanelAuthTables,
   seedDefaultBossFromEnv,
+  importMemberWebAccountsIntoPanelUsers,
   normalizeUsername,
   listUsers,
   createUser,
