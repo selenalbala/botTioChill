@@ -1,43 +1,47 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <title>TÍO CHILL MC · Acceso</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/panel.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏% · Acceso</title>
+  <link rel="stylesheet" href="/static/panel.css" />
 </head>
 <body class="login-page">
   <main class="login-card">
     <div class="brand-mark">🏍️</div>
-    <h1>TÍO CHILL MC</h1>
-    <p>Acceso al panel de salidas, calendario y miembros.</p>
+    <p class="eyebrow">Panel privado</p>
+    <h1>𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏%</h1>
+    <p class="login-help">Acceso único para miembros, staff y jefes.</p>
 
-    <form id="loginForm" class="form-stack">
+    <form id="loginForm" class="form-stack" autocomplete="on">
       <label>
         Usuario
-        <input id="username" name="username" autocomplete="username" required>
+        <input id="username" name="username" type="text" autocomplete="username" required autofocus />
       </label>
 
       <label>
         Contraseña
-        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
       </label>
 
-      <button type="submit">Entrar</button>
-      <p id="loginError" class="message error" hidden></p>
+      <button class="primary wide" type="submit">Entrar</button>
+      <div id="loginMessage" class="message" aria-live="polite"></div>
     </form>
-
-    <a class="muted-link" href="/login">Ir al panel antiguo de tiradas</a>
   </main>
 
   <script>
     const form = document.getElementById("loginForm");
-    const errorBox = document.getElementById("loginError");
+    const message = document.getElementById("loginMessage");
+
+    if (new URLSearchParams(window.location.search).has("error")) {
+      message.textContent = "Usuario o contraseña incorrectos.";
+      message.className = "message error";
+    }
 
     form.addEventListener("submit", async event => {
       event.preventDefault();
-      errorBox.hidden = true;
-      errorBox.textContent = "";
+      message.textContent = "Entrando...";
+      message.className = "message";
 
       try {
         const res = await fetch("/api/panel/login", {
@@ -50,12 +54,15 @@
         });
 
         const data = await res.json().catch(() => ({ ok: false, error: "Respuesta no válida." }));
-        if (!res.ok || !data.ok) throw new Error(data.error || "No se pudo iniciar sesión.");
+
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || "No se pudo iniciar sesión.");
+        }
 
         window.location.href = "/panel";
       } catch (error) {
-        errorBox.textContent = error.message;
-        errorBox.hidden = false;
+        message.textContent = error.message;
+        message.className = "message error";
       }
     });
   </script>

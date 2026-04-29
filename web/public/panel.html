@@ -1,12 +1,11 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <title>TÍO CHILL MC · Panel</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
-  <link rel="stylesheet" href="/static/panel.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏% · Panel</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" />
+  <link rel="stylesheet" href="/static/panel.css" />
 </head>
 <body>
   <div class="shell">
@@ -14,40 +13,42 @@
       <div class="brand">
         <div class="brand-icon">🏍️</div>
         <div>
-          <strong>TÍO CHILL MC</strong>
+          <strong>𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏%</strong>
           <span>Panel interno</span>
         </div>
       </div>
 
       <nav class="nav">
-        <button class="nav-item active" data-tab="calendarTab">📅 Calendario</button>
-        <button class="nav-item" data-tab="salidasTab">🏍️ Salidas</button>
-        <button class="nav-item boss-only" data-tab="usersTab">👥 Miembros</button>
-        <a class="nav-link boss-only" href="/" target="_blank">📊 Panel tiradas</a>
-        <a class="nav-link boss-only" href="/cuentas-miembros" target="_blank">🔐 Cuentas miembros</a>
+        <button class="nav-item active" type="button" data-tab="calendarTab">📅 Calendario</button>
+        <button class="nav-item" type="button" data-tab="salidasTab">🏍️ Salidas</button>
+        <button class="nav-item boss-only" type="button" data-tab="usersTab">👥 Miembros</button>
+        <a class="nav-link staff-only" href="/">📊 Panel tiradas</a>
+        <a class="nav-link staff-only" href="/cuentas-miembros">🔐 Cuentas miembros</a>
+        <a class="nav-link member-meta-link" href="/mi-meta">🙋 Mi meta</a>
       </nav>
 
       <div class="user-card">
-        <div id="currentDisplayName">Cargando...</div>
-        <small id="currentRole">-</small>
+        <small>Conectado como</small>
+        <strong id="currentDisplayName">Cargando...</strong>
+        <span id="currentRole" class="role-pill">-</span>
+        <button id="logoutBtn" type="button" class="ghost full-button">Cerrar sesión</button>
       </div>
-
-      <button id="logoutBtn" class="ghost danger">Cerrar sesión</button>
     </aside>
 
     <main class="main">
-      <header class="topbar">
+      <header class="topbar-panel">
         <div>
+          <p class="eyebrow">𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏%</p>
           <h1 id="pageTitle">Calendario de salidas</h1>
-          <p id="pageSubtitle">Todos pueden ver las salidas y votar si van o no.</p>
+          <p id="pageSubtitle">Vista mensual tipo Google Calendar.</p>
         </div>
-        <button id="openCreateSalidaBtn" class="boss-only primary">+ Crear salida</button>
+        <button id="openCreateSalidaBtn" class="primary boss-only" type="button">+ Crear salida</button>
       </header>
 
-      <div id="statusMessage" class="status"></div>
+      <div id="statusMessage" class="status" aria-live="polite"></div>
 
       <section id="calendarTab" class="tab active">
-        <div class="card">
+        <div class="card calendar-card">
           <div id="calendar"></div>
         </div>
       </section>
@@ -57,40 +58,38 @@
           <div class="card">
             <div class="card-title">
               <h2>Próximas salidas</h2>
-              <button id="refreshSalidasBtn" class="ghost">Actualizar</button>
+              <button id="refreshSalidasBtn" class="ghost" type="button">Actualizar</button>
             </div>
             <div id="salidasList" class="salidas-list"></div>
           </div>
 
           <div class="card">
             <h2>Detalle</h2>
-            <div id="salidaDetail" class="empty-state">
-              Selecciona una salida del calendario o de la lista.
-            </div>
+            <div id="salidaDetail" class="empty-state">Selecciona una salida del calendario o de la lista.</div>
           </div>
         </div>
       </section>
 
-      <section id="usersTab" class="tab">
+      <section id="usersTab" class="tab boss-only">
         <div class="grid two">
           <div class="card">
             <h2>Crear / editar usuario</h2>
             <form id="userForm" class="form-grid">
-              <input type="hidden" id="userId">
+              <input id="userId" type="hidden" />
 
               <label>
                 Usuario web
-                <input id="userUsername" placeholder="ej: pepe" required>
+                <input id="userUsername" type="text" autocomplete="off" required />
               </label>
 
               <label>
                 Nombre visible
-                <input id="userDisplayName" placeholder="ej: Pepe">
+                <input id="userDisplayName" type="text" autocomplete="off" />
               </label>
 
               <label>
                 ID Discord
-                <input id="userDiscordId" placeholder="opcional">
+                <input id="userDiscordId" type="text" inputmode="numeric" autocomplete="off" />
               </label>
 
               <label>
@@ -104,17 +103,17 @@
 
               <label>
                 Contraseña
-                <input id="userPassword" type="password" placeholder="mínimo 6 caracteres">
+                <input id="userPassword" type="password" autocomplete="new-password" placeholder="Obligatoria al crear. Opcional al editar." />
               </label>
 
               <label class="checkbox-line">
-                <input id="userActive" type="checkbox" checked>
+                <input id="userActive" type="checkbox" checked />
                 Activo
               </label>
 
               <div class="form-actions">
-                <button type="submit" class="primary">Guardar usuario</button>
-                <button type="button" id="clearUserFormBtn" class="ghost">Limpiar</button>
+                <button class="primary" type="submit">Guardar usuario</button>
+                <button id="clearUserFormBtn" class="ghost" type="button">Limpiar</button>
               </div>
             </form>
           </div>
@@ -122,9 +121,9 @@
           <div class="card">
             <div class="card-title">
               <h2>Miembros web</h2>
-              <button id="refreshUsersBtn" class="ghost">Actualizar</button>
+              <button id="refreshUsersBtn" class="ghost" type="button">Actualizar</button>
             </div>
-            <div id="usersTable"></div>
+            <div id="usersTable" class="table-wrap"></div>
           </div>
         </div>
       </section>
@@ -132,58 +131,59 @@
   </div>
 
   <dialog id="salidaDialog" class="dialog">
-    <form id="salidaForm" method="dialog" class="form-stack">
+    <form id="salidaForm" method="dialog">
       <div class="dialog-title">
         <h2 id="salidaDialogTitle">Crear salida</h2>
-        <button type="button" id="closeSalidaDialogBtn" class="icon-btn">×</button>
+        <button id="closeSalidaDialogBtn" class="icon-btn ghost" type="button" aria-label="Cerrar">×</button>
       </div>
 
-      <input type="hidden" id="salidaId">
+      <input id="salidaId" type="hidden" />
 
-      <label>
-        Título
-        <input id="salidaTitle" maxlength="120" required placeholder="Ruta por Sandy Shores">
-      </label>
+      <div class="form-grid">
+        <label>
+          Título
+          <input id="salidaTitle" type="text" required />
+        </label>
 
-      <label>
-        Lugar
-        <input id="salidaLocation" maxlength="180" placeholder="Sede MC">
-      </label>
+        <label>
+          Lugar
+          <input id="salidaLocation" type="text" />
+        </label>
 
-      <div class="grid two compact">
         <label>
           Inicio
-          <input id="salidaStartsAt" type="datetime-local" required>
+          <input id="salidaStartsAt" type="datetime-local" required />
         </label>
 
         <label>
           Fin
-          <input id="salidaEndsAt" type="datetime-local">
+          <input id="salidaEndsAt" type="datetime-local" />
+        </label>
+
+        <label class="full-width">
+          Descripción
+          <textarea id="salidaDescription" rows="4"></textarea>
+        </label>
+
+        <label>
+          Estado
+          <select id="salidaStatus">
+            <option value="open">Abierta</option>
+            <option value="closed">Cerrada</option>
+            <option value="cancelled">Cancelada</option>
+          </select>
         </label>
       </div>
 
-      <label>
-        Descripción
-        <textarea id="salidaDescription" rows="4" maxlength="1000" placeholder="Detalles de la salida..."></textarea>
-      </label>
-
-      <label id="salidaStatusWrap">
-        Estado
-        <select id="salidaStatus">
-          <option value="open">Abierta</option>
-          <option value="closed">Cerrada</option>
-          <option value="cancelled">Cancelada</option>
-        </select>
-      </label>
-
-      <div class="form-actions">
-        <button type="submit" class="primary">Guardar salida</button>
-        <button type="button" id="cancelSalidaBtn" class="ghost danger">Cancelar salida</button>
+      <div class="form-actions dialog-actions">
+        <button class="primary" type="submit">Guardar salida</button>
+        <button id="cancelSalidaBtn" class="danger-button" type="button">Cancelar salida</button>
       </div>
     </form>
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/locales-all.global.min.js"></script>
   <script src="/static/panel.js"></script>
 </body>
 </html>

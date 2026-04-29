@@ -27,14 +27,23 @@ function formatDate(value) {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
+
   return new Intl.DateTimeFormat("es-ES", {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(date);
 }
 
+function statusText(status) {
+  if (status === "open") return "Abierta";
+  if (status === "closed") return "Cerrada";
+  if (status === "cancelled") return "Cancelada";
+  return status || "-";
+}
+
 function setStatus(message, type = "") {
   const el = document.getElementById("statusMessage");
+  if (!el) return;
   el.textContent = message || "";
   el.className = `status ${type}`.trim();
 }
@@ -49,11 +58,13 @@ async function fetchJson(url, options = {}) {
   });
 
   const data = await res.json().catch(() => ({ ok: false, error: "Respuesta no válida." }));
+
   if (!res.ok || data.ok === false) {
     if (res.status === 401) {
       window.location.href = "/panel/login";
-      return;
+      return null;
     }
+
     throw new Error(data.error || `Error HTTP ${res.status}`);
   }
 
@@ -64,13 +75,27 @@ function isBoss() {
   return currentUser?.role === "boss";
 }
 
+function isStaffOrBoss() {
+  return currentUser?.role === "boss" || currentUser?.role === "staff";
+}
+
 function showRoleSections() {
   document.querySelectorAll(".boss-only").forEach(el => {
     el.style.display = isBoss() ? "" : "none";
   });
+
+  document.querySelectorAll(".staff-only").forEach(el => {
+    el.style.display = isStaffOrBoss() ? "" : "none";
+  });
+
+  document.querySelectorAll(".member-meta-link").forEach(el => {
+    el.style.display = currentUser?.discordUserId ? "" : "none";
+  });
 }
 
 function setActiveTab(tabId) {
+  if (tabId === "usersTab" && !isBoss()) tabId = "calendarTab";
+
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.tab === tabId);
   });
@@ -93,6 +118,10 @@ function setActiveTab(tabId) {
     setTimeout(() => calendar.updateSize(), 50);
   }
 
+  if (tabId === "salidasTab") {
+    loadSalidasList().catch(error => setStatus(error.message, "error"));
+  }
+
   if (tabId === "usersTab") {
     loadUsers().catch(error => setStatus(error.message, "error"));
   }
@@ -100,6 +129,8 @@ function setActiveTab(tabId) {
 
 async function loadMe() {
   const data = await fetchJson("/api/panel/me");
+  if (!data) return;
+
   currentUser = data.user;
   document.getElementById("currentDisplayName").textContent = currentUser.displayName || currentUser.username;
   document.getElementById("currentRole").textContent = ROLE_NAMES[currentUser.role] || currentUser.role;
@@ -108,6 +139,7 @@ async function loadMe() {
 
 function initCalendar() {
   const el = document.getElementById("calendar");
+  if (!el || !window.FullCalendar) return;
 
   calendar = new FullCalendar.Calendar(el, {
     locale: "es",
@@ -143,6 +175,8 @@ function initCalendar() {
 
 async function loadSalidasList() {
   const data = await fetchJson("/api/panel/salidas");
+  if (!data) return;
+
   const box = document.getElementById("salidasList");
 
   if (!data.salidas.length) {
@@ -151,12 +185,12 @@ async function loadSalidasList() {
   }
 
   box.innerHTML = data.salidas.map(salida => `
-    <button class="salida-row ${selectedSalidaId == salida.id ? "active" : ""}" data-salida-id="${salida.id}">
+    <button class="salida-row ${Number(selectedSalidaId) === Number(salida.id) ? "active" : ""}" type="button" data-salida-id="${salida.id}">
       <span>
         <strong>${escapeHtml(salida.title)}</strong>
         <small>${escapeHtml(salida.location || "Sin lugar")} · ${formatDate(salida.startsAt)}</small>
       </span>
-      <em class="pill ${escapeHtml(salida.status)}">${statusText(salida.status)}</em>
+      <span class="pill ${escapeHtml(salida.status)}">${statusText(salida.status)}</span>
     </button>
   `).join("");
 
@@ -169,35 +203,28 @@ async function loadSalidasList() {
   });
 }
 
-function statusText(status) {
-  if (status === "open") return "Abierta";
-  if (status === "closed") return "Cerrada";
-  if (status === "cancelled") return "Cancelada";
-  return status;
-}
-
 function renderVotes(votes) {
-  const groups = {
-    going: [],
-    maybe: [],
-    not_going: []
-  };
+  const groups = { going: [], maybe: [], not_going: [] };
 
   for (const vote of votes || []) {
     if (groups[vote.status]) groups[vote.status].push(vote);
   }
 
-  return Object.entries(groups).map(([status, items]) => `
-    <div class="vote-column">
-      <h4>${VOTE_LABELS[status]} <span>${items.length}</span></h4>
-      ${items.length ? items.map(item => `
-        <div class="mini-user">
-          <strong>${escapeHtml(item.displayName || item.username)}</strong>
-          <small>${escapeHtml(ROLE_NAMES[item.role] || item.role)}</small>
+  return `
+    <div class="votes-grid">
+      ${Object.entries(groups).map(([status, items]) => `
+        <div class="vote-column">
+          <h4>${VOTE_LABELS[status]} <span>${items.length}</span></h4>
+          ${items.length ? items.map(item => `
+            <div class="mini-user">
+              <strong>${escapeHtml(item.displayName || item.username)}</strong>
+              <small>${escapeHtml(ROLE_NAMES[item.role] || item.role)}</small>
+            </div>
+          `).join("") : `<div class="muted">Sin respuestas</div>`}
         </div>
-      `).join("") : `<p class="muted">Sin respuestas</p>`}
+      `).join("")}
     </div>
-  `).join("");
+  `;
 }
 
 function renderComments(comments) {
@@ -206,29 +233,32 @@ function renderComments(comments) {
   }
 
   return comments.map(comment => {
-    const canDelete = isBoss() || currentUser?.role === "staff" || Number(comment.userId) === Number(currentUser.id);
+    const canDelete = isStaffOrBoss() || Number(comment.userId) === Number(currentUser.id);
+
     return `
-      <div class="comment">
+      <article class="comment">
         <div class="comment-head">
           <strong>${escapeHtml(comment.displayName || comment.username)}</strong>
           <small>${formatDate(comment.createdAt)}</small>
         </div>
         <p>${escapeHtml(comment.comment)}</p>
-        ${canDelete ? `<button class="text-danger" data-delete-comment="${comment.id}">Borrar</button>` : ""}
-      </div>
+        ${canDelete ? `<button class="text-danger" type="button" data-delete-comment="${comment.id}">Borrar</button>` : ""}
+      </article>
     `;
   }).join("");
 }
 
 async function loadSalidaDetail(id) {
   const data = await fetchJson(`/api/panel/salidas/${id}`);
-  const { salida, counts, myVote, votes, comments } = data;
+  if (!data) return;
 
+  const { salida, counts, myVote, votes, comments } = data;
   selectedSalidaId = salida.id;
 
   const voteStatus = myVote?.status || "";
   const detail = document.getElementById("salidaDetail");
 
+  detail.className = "salida-detail";
   detail.innerHTML = `
     <div class="detail-header">
       <div>
@@ -245,22 +275,21 @@ async function loadSalidaDetail(id) {
     </div>
 
     <div class="vote-actions">
-      <button class="${voteStatus === "going" ? "selected" : ""}" data-vote="going">✅ Voy (${counts.going})</button>
-      <button class="${voteStatus === "not_going" ? "selected" : ""}" data-vote="not_going">❌ No voy (${counts.notGoing})</button>
-      <button class="${voteStatus === "maybe" ? "selected" : ""}" data-vote="maybe">❔ Dudoso (${counts.maybe})</button>
+      <button type="button" class="${voteStatus === "going" ? "selected" : ""}" data-vote="going">✅ Voy (${counts.going})</button>
+      <button type="button" class="${voteStatus === "not_going" ? "selected" : ""}" data-vote="not_going">❌ No voy (${counts.notGoing})</button>
+      <button type="button" class="${voteStatus === "maybe" ? "selected" : ""}" data-vote="maybe">❔ Dudoso (${counts.maybe})</button>
+      ${isBoss() ? `<button type="button" class="ghost" data-edit-salida>Editar salida</button>` : ""}
     </div>
 
-    <div class="votes-grid">
-      ${renderVotes(votes)}
-    </div>
+    ${renderVotes(votes)}
 
     <div class="comments-section">
       <h4>Comentarios</h4>
       <form id="commentForm" class="comment-form">
-        <input id="commentInput" maxlength="1000" placeholder="Escribe un comentario...">
-        <button type="submit">Comentar</button>
+        <input id="commentInput" type="text" placeholder="Escribe un comentario..." required maxlength="500" />
+        <button class="primary" type="submit">Comentar</button>
       </form>
-      <div id="commentsList">${renderComments(comments)}</div>
+      <div>${renderComments(comments)}</div>
     </div>
   `;
 
@@ -271,14 +300,21 @@ async function loadSalidaDetail(id) {
           method: "POST",
           body: JSON.stringify({ status: button.dataset.vote })
         });
+
         setStatus("Voto guardado.", "ok");
         await loadSalidaDetail(salida.id);
+        await loadSalidasList();
         calendar?.refetchEvents();
       } catch (error) {
         setStatus(error.message, "error");
       }
     });
   });
+
+  const editButton = detail.querySelector("[data-edit-salida]");
+  if (editButton) {
+    editButton.addEventListener("click", () => openEditSalidaDialog(salida));
+  }
 
   detail.querySelector("#commentForm").addEventListener("submit", async event => {
     event.preventDefault();
@@ -289,6 +325,7 @@ async function loadSalidaDetail(id) {
         method: "POST",
         body: JSON.stringify({ comment: input.value })
       });
+
       input.value = "";
       setStatus("Comentario añadido.", "ok");
       await loadSalidaDetail(salida.id);
@@ -302,7 +339,10 @@ async function loadSalidaDetail(id) {
       if (!confirm("¿Borrar este comentario?")) return;
 
       try {
-        await fetchJson(`/api/panel/comments/${button.dataset.deleteComment}`, { method: "DELETE" });
+        await fetchJson(`/api/panel/comments/${button.dataset.deleteComment}`, {
+          method: "DELETE"
+        });
+
         setStatus("Comentario borrado.", "ok");
         await loadSalidaDetail(salida.id);
       } catch (error) {
@@ -310,6 +350,14 @@ async function loadSalidaDetail(id) {
       }
     });
   });
+}
+
+function toDatetimeLocal(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  const pad = number => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function clearSalidaForm() {
@@ -329,6 +377,19 @@ function openCreateSalidaDialog() {
   document.getElementById("salidaDialog").showModal();
 }
 
+function openEditSalidaDialog(salida) {
+  document.getElementById("salidaId").value = salida.id;
+  document.getElementById("salidaTitle").value = salida.title || "";
+  document.getElementById("salidaLocation").value = salida.location || "";
+  document.getElementById("salidaStartsAt").value = toDatetimeLocal(salida.startsAt);
+  document.getElementById("salidaEndsAt").value = toDatetimeLocal(salida.endsAt);
+  document.getElementById("salidaDescription").value = salida.description || "";
+  document.getElementById("salidaStatus").value = salida.status || "open";
+  document.getElementById("cancelSalidaBtn").style.display = "";
+  document.getElementById("salidaDialogTitle").textContent = "Editar salida";
+  document.getElementById("salidaDialog").showModal();
+}
+
 async function saveSalida(event) {
   event.preventDefault();
 
@@ -345,10 +406,7 @@ async function saveSalida(event) {
   try {
     const url = id ? `/api/panel/salidas/${id}` : "/api/panel/salidas";
     const method = id ? "PATCH" : "POST";
-    const data = await fetchJson(url, {
-      method,
-      body: JSON.stringify(payload)
-    });
+    const data = await fetchJson(url, { method, body: JSON.stringify(payload) });
 
     setStatus(id ? "Salida actualizada." : "Salida creada.", "ok");
     document.getElementById("salidaDialog").close();
@@ -365,7 +423,6 @@ async function saveSalida(event) {
 async function cancelSelectedSalida() {
   const id = document.getElementById("salidaId").value;
   if (!id) return;
-
   if (!confirm("¿Seguro que quieres cancelar esta salida?")) return;
 
   try {
@@ -373,6 +430,7 @@ async function cancelSelectedSalida() {
       method: "POST",
       body: JSON.stringify({ status: "cancelled" })
     });
+
     setStatus("Salida cancelada.", "ok");
     document.getElementById("salidaDialog").close();
     calendar?.refetchEvents();
@@ -387,6 +445,8 @@ async function loadUsers() {
   if (!isBoss()) return;
 
   const data = await fetchJson("/api/panel/users");
+  if (!data) return;
+
   const box = document.getElementById("usersTable");
 
   if (!data.users.length) {
@@ -408,13 +468,18 @@ async function loadUsers() {
       <tbody>
         ${data.users.map(user => `
           <tr>
-            <td>${escapeHtml(user.displayName)}</td>
-            <td>${escapeHtml(user.username)}<br><small>${escapeHtml(user.discordUserId || "sin Discord ID")}</small></td>
+            <td>
+              <strong>${escapeHtml(user.displayName)}</strong><br />
+              <small>${escapeHtml(user.discordUserId || "sin Discord ID")}</small>
+            </td>
+            <td>${escapeHtml(user.username)}</td>
             <td>${escapeHtml(ROLE_NAMES[user.role] || user.role)}</td>
             <td>${user.active ? "Activo" : "Desactivado"}</td>
-            <td class="actions">
-              <button data-edit-user='${escapeHtml(JSON.stringify(user))}'>Editar</button>
-              <button data-reset-password="${user.id}">Contraseña</button>
+            <td>
+              <div class="actions">
+                <button type="button" data-edit-user="${escapeHtml(JSON.stringify(user))}">Editar</button>
+                <button type="button" data-reset-password="${user.id}">Contraseña</button>
+              </div>
             </td>
           </tr>
         `).join("")}
@@ -425,6 +490,7 @@ async function loadUsers() {
   box.querySelectorAll("[data-edit-user]").forEach(button => {
     button.addEventListener("click", () => {
       const user = JSON.parse(button.dataset.editUser);
+
       document.getElementById("userId").value = user.id;
       document.getElementById("userUsername").value = user.username;
       document.getElementById("userDisplayName").value = user.displayName;
@@ -446,6 +512,7 @@ async function loadUsers() {
           method: "POST",
           body: JSON.stringify({ password })
         });
+
         setStatus("Contraseña cambiada.", "ok");
       } catch (error) {
         setStatus(error.message, "error");
@@ -469,7 +536,6 @@ async function saveUser(event) {
 
   const id = document.getElementById("userId").value;
   const password = document.getElementById("userPassword").value;
-
   const payload = {
     username: document.getElementById("userUsername").value,
     displayName: document.getElementById("userDisplayName").value,
@@ -509,15 +575,18 @@ function bindEvents() {
   });
 
   document.getElementById("logoutBtn").addEventListener("click", async () => {
-    await fetchJson("/api/panel/logout", { method: "POST", body: JSON.stringify({}) });
+    await fetchJson("/api/panel/logout", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+
     window.location.href = "/panel/login";
   });
 
-  document.getElementById("openCreateSalidaBtn").addEventListener("click", openCreateSalidaDialog);
+  document.getElementById("openCreateSalidaBtn")?.addEventListener("click", openCreateSalidaDialog);
   document.getElementById("closeSalidaDialogBtn").addEventListener("click", () => document.getElementById("salidaDialog").close());
   document.getElementById("salidaForm").addEventListener("submit", saveSalida);
   document.getElementById("cancelSalidaBtn").addEventListener("click", cancelSelectedSalida);
-
   document.getElementById("refreshSalidasBtn").addEventListener("click", async () => {
     await loadSalidasList();
     calendar?.refetchEvents();
