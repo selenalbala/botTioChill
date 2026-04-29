@@ -2,6 +2,7 @@ const path = require("path");
 const {
   initPanelAuthTables,
   seedDefaultBossFromEnv,
+  importMemberWebAccountsIntoPanelUsers,
   listUsers,
   createUser,
   updateUser,
@@ -107,9 +108,14 @@ async function notifySalidaToDiscord(client, salida, action, actor) {
 }
 
 function attachPanelRoutes(app, { client } = {}) {
-  initPanelAuthTables();
-  initSalidaTables();
-  seedDefaultBossFromEnv().catch(error => {
+initPanelAuthTables();
+initSalidaTables();
+
+seedDefaultBossFromEnv()
+  .then(() => {
+    importMemberWebAccountsIntoPanelUsers();
+  })
+  .catch(error => {
     console.error("[PANEL] Error creando usuario jefe inicial:", error);
   });
 
