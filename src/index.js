@@ -217,19 +217,62 @@ async function handleTiradaButton(interaction) {
   db.insertTirada(row);
 
   const totalAfter = Number(db.getTotalByUser(userId));
-  const state = getMetaState(TARGET_CHANNEL_ID);
-  const nextUnix = Math.floor((Date.now() + TIRADA_COOLDOWN_MS) / 1000);
+const state = getMetaState(TARGET_CHANNEL_ID);
 
+if (!state.listoParaProcesar) {
   await logAction(client, {
     ...actionFromInteraction(
       interaction,
-      "tirada_accepted",
-      "success",
-      `Antes: ${totalBefore}. Después: ${totalAfter}. Meta actual: ${state.metaActual}/${META_MAXIMA_PROCESO}.`
+      "procesar_click",
+      "blocked",
+      `No se ha llegado a la guía de proceso. Meta actual: ${state.metaActual}/${state.metaGuiaProceso}.`
     )
   });
 
-  await refreshMetaPanel(client);
+  await interaction.reply({
+    content: [
+      "Todavía no se debe procesar.",
+      "",
+      `La guía es **${state.metaGuiaProceso}**. No hace falta esperar a **500**, pero tampoco se debería procesar antes de la guía.`,
+      "",
+      buildProcessStatusText(TARGET_CHANNEL_ID)
+    ].join("\n"),
+    flags: MessageFlags.Ephemeral
+  });
+
+  return;
+}
+
+await interaction.deferReply({
+  flags: MessageFlags.Ephemeral
+});
+
+const tiradasAProcesar = state.tiradasPendientes;
+const metaAProcesar = state.metaActual;
+
+db.processPendingTiradas({
+  channelId: TARGET_CHANNEL_ID,
+  cantidadTiradas: tiradasAProcesar,
+  metaTotal: metaAProcesar,
+  timestampUtc: new Date().toISOString(),
+  fechaLocal: getLocalDateText(new Date(), TIMEZONE),
+  guildId: interaction.guildId,
+  processorUserId: interaction.user.id,
+  processorUsername: interaction.user.username,
+  processorDisplayName:
+    interaction.member?.displayName ||
+    interaction.user.globalName ||
+    interaction.user.username
+});
+
+await logAction(client, {
+  ...actionFromInteraction(
+    interaction,
+    "procesar_success",
+    "success",
+    `Se han procesado ${metaAProcesar} de meta. Tiradas consumidas: ${tiradasAProcesar}.`
+  )
+});
   scheduleCooldownPanelRefresh();
 
   try {
@@ -273,59 +316,65 @@ async function handleProcesarButton(interaction) {
 
   const state = getMetaState(TARGET_CHANNEL_ID);
 
-  if (!state.listoParaProcesar) {
-    await logAction(client, {
-      ...actionFromInteraction(interaction, "procesar_click", "blocked", "No hay meta suficiente para procesar.")
-    });
-
-    await interaction.reply({
-      content: [
-        "Todavía no se puede procesar.",
-        "",
-        buildProcessStatusText(TARGET_CHANNEL_ID)
-      ].join("\n"),
-      flags: MessageFlags.Ephemeral
-    });
-
-    return;
-  }
-
-  await interaction.deferReply({
-    flags: MessageFlags.Ephemeral
-  });
-
-  db.processPendingTiradas({
-    channelId: TARGET_CHANNEL_ID,
-    cantidadTiradas: TIRADAS_PARA_PROCESAR,
-    metaTotal: META_MAXIMA_PROCESO,
-    timestampUtc: new Date().toISOString(),
-    fechaLocal: getLocalDateText(new Date(), TIMEZONE),
-    guildId: interaction.guildId,
-    processorUserId: interaction.user.id,
-    processorUsername: interaction.user.username,
-    processorDisplayName:
-      interaction.member?.displayName ||
-      interaction.user.globalName ||
-      interaction.user.username
-  });
-
+if (!state.listoParaEmpaquetar) {
   await logAction(client, {
     ...actionFromInteraction(
       interaction,
-      "procesar_success",
-      "success",
-      `Se han procesado ${META_MAXIMA_PROCESO} de meta.`
+      "empaquetar_click",
+      "blocked",
+      `No se ha llegado a la guía de empaquetado. Meta procesada: ${state.metaProcesadaPendiente}/${state.metaGuiaEmpaquetar}.`
     )
   });
 
-  await refreshMetaPanel(client);
+  await interaction.reply({
+    content: [
+      "Todavía no se debe empaquetar.",
+      "",
+      `La guía es **${state.metaGuiaEmpaquetar}**. No hace falta esperar a **500**, pero tampoco se debería empaquetar antes de la guía.`,
+      "",
+      buildPackagingStatusText(TARGET_CHANNEL_ID)
+    ].join("\n"),
+    flags: MessageFlags.Ephemeral
+  });
+
+  return;
+}
+
+await interaction.deferReply({
+  flags: MessageFlags.Ephemeral
+});
+
+const metaAempaquetar = state.metaProcesadaPendiente;
+
+db.packagePendingMeta({
+  channelId: TARGET_CHANNEL_ID,
+  metaAempaquetar,
+  timestampUtc: new Date().toISOString(),
+  fechaLocal: getLocalDateText(new Date(), TIMEZONE),
+  guildId: interaction.guildId,
+  packerUserId: interaction.user.id,
+  packerUsername: interaction.user.username,
+  packerDisplayName:
+    interaction.member?.displayName ||
+    interaction.user.globalName ||
+    interaction.user.username
+});
+
+await logAction(client, {
+  ...actionFromInteraction(
+    interaction,
+    "empaquetar_success",
+    "success",
+    `Se han empaquetado ${metaAempaquetar} de meta.`
+  )
+});
 
 await interaction.editReply({
   content: [
     "Proceso registrado correctamente.",
     "",
-    `Se han procesado **${META_MAXIMA_PROCESO}** de metanfetamina.`,
-    `Se han consumido **${TIRADAS_PARA_PROCESAR}** tiradas pendientes.`,
+`Se han procesado **${metaAProcesar}** de metanfetamina.`,
+`Se han consumido **${tiradasAProcesar}** tiradas pendientes.`,
     "",
     buildPackagingStatusText(TARGET_CHANNEL_ID),
     "",
@@ -403,7 +452,7 @@ async function handleEmpaquetarButton(interaction) {
     content: [
       "Empaquetado registrado correctamente.",
       "",
-      `Se han empaquetado **${META_PARA_EMPAQUETAR}** de metanfetamina.`,
+      `Se han empaquetado **${metaAempaquetar}** de metanfetamina.`,
       "",
       buildPackagingStatusText(TARGET_CHANNEL_ID)
     ].join("\n")
