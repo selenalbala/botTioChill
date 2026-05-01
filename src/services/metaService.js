@@ -3,8 +3,11 @@ const {
   TIMEZONE,
   META_POR_TIRADA,
   META_MAXIMA_PROCESO,
+  META_GUIA_PROCESO,
+  META_CAPACIDAD_MAXIMA,
   TIRADAS_PARA_PROCESAR,
-  META_PARA_EMPAQUETAR
+  META_PARA_EMPAQUETAR,
+  META_GUIA_EMPAQUETAR
 } = require("../config");
 
 const db = require("../db");
@@ -54,34 +57,43 @@ function getIsoWeekFromParts(year, month, day) {
 function getMetaState(channelId = TARGET_CHANNEL_ID) {
   const tiradasPendientes = db.getPendingTiradasCount(channelId);
   const metaActual = db.getPendingMetaTotal(channelId, META_POR_TIRADA);
-  const metaRestante = Math.max(META_MAXIMA_PROCESO - metaActual, 0);
-  const tiradasRestantes = Math.max(TIRADAS_PARA_PROCESAR - tiradasPendientes, 0);
-
-  const metaProcesadaPendiente = db.getPendingProcessedMeta(channelId);
-  const metaProcesadaRestante = Math.max(META_PARA_EMPAQUETAR - metaProcesadaPendiente, 0);
+const metaRestante = Math.max(META_GUIA_PROCESO - metaActual, 0);
+const tiradasRestantes = Math.max(TIRADAS_PARA_PROCESAR - tiradasPendientes, 0);
+const metaProcesadaPendiente = db.getPendingProcessedMeta(channelId);
+const metaProcesadaRestante = Math.max(META_GUIA_EMPAQUETAR - metaProcesadaPendiente, 0);
 
   return {
-    metaPorTirada: META_POR_TIRADA,
-    metaMaximaProceso: META_MAXIMA_PROCESO,
-    tiradasParaProcesar: TIRADAS_PARA_PROCESAR,
+  metaPorTirada: META_POR_TIRADA,
 
-    tiradasPendientes,
-    metaActual,
-    metaRestante,
-    tiradasRestantes,
-    listoParaProcesar: metaActual >= META_MAXIMA_PROCESO,
+  // 448: guía de cuándo se debería procesar
+  metaMaximaProceso: META_GUIA_PROCESO,
+  metaGuiaProceso: META_GUIA_PROCESO,
 
-    porUsuarios: db.getPendingTiradasByUser(channelId),
+  // 500: capacidad máxima visual/informativa
+  metaCapacidadMaxima: META_CAPACIDAD_MAXIMA,
 
-    metaParaEmpaquetar: META_PARA_EMPAQUETAR,
-    metaProcesadaPendiente,
-    metaProcesadaRestante,
-    listoParaEmpaquetar: metaProcesadaPendiente >= META_PARA_EMPAQUETAR,
+  tiradasParaProcesar: TIRADAS_PARA_PROCESAR,
+  tiradasPendientes,
+  metaActual,
+  metaRestante,
+  tiradasRestantes,
 
-    ultimosProcesos: db.getProcesos(5),
-    ultimosEmpaquetados: db.getEmpaquetados(5)
-  };
-}
+  // Ahora "listo" significa: ya ha llegado a la guía de 448, no a 500
+  listoParaProcesar: metaActual >= META_GUIA_PROCESO,
+
+  porUsuarios: db.getPendingTiradasByUser(channelId),
+
+  metaParaEmpaquetar: META_GUIA_EMPAQUETAR,
+  metaGuiaEmpaquetar: META_GUIA_EMPAQUETAR,
+  metaProcesadaPendiente,
+  metaProcesadaRestante,
+
+  // Ahora "listo" significa: ya hay 448 procesados, no 500
+  listoParaEmpaquetar: metaProcesadaPendiente >= META_GUIA_EMPAQUETAR,
+
+  ultimosProcesos: db.getProcesos(5),
+  ultimosEmpaquetados: db.getEmpaquetados(5)
+};
 
 function buildMetaAdjustmentRow(deltaTiradas, actor = {}) {
   const now = new Date();
@@ -136,11 +148,13 @@ function buildProcessStatusText(channelId = TARGET_CHANNEL_ID) {
   const state = getMetaState(channelId);
 
   return [
-    `Meta acumulada: **${state.metaActual}/${META_MAXIMA_PROCESO}**`,
-    `Tiradas acumuladas: **${state.tiradasPendientes}/${TIRADAS_PARA_PROCESAR}**`,
+    `Meta acumulada: **${state.metaActual}/${state.metaCapacidadMaxima}**`,
+    `Guía recomendada para procesar: **${state.metaGuiaProceso}**`,
+    `Tiradas acumuladas: **${state.tiradasPendientes}/${state.tiradasParaProcesar}**`,
+
     state.listoParaProcesar
-      ? "Estado: **listo para procesar**."
-      : `Faltan **${state.metaRestante}** de meta, es decir **${state.tiradasRestantes}** tirada(s).`
+      ? "Estado: **listo para procesar**. No hace falta esperar a 500."
+      : `Faltan **${state.metaRestante}** de meta para llegar a la guía de ${state.metaGuiaProceso}.`
   ].join("\n");
 }
 
@@ -148,10 +162,12 @@ function buildPackagingStatusText(channelId = TARGET_CHANNEL_ID) {
   const state = getMetaState(channelId);
 
   return [
-    `Meta procesada pendiente de empaquetar: **${state.metaProcesadaPendiente}/${META_PARA_EMPAQUETAR}**`,
+    `Meta procesada pendiente de empaquetar: **${state.metaProcesadaPendiente}/${state.metaCapacidadMaxima}**`,
+    `Guía recomendada para empaquetar: **${state.metaGuiaEmpaquetar}**`,
+
     state.listoParaEmpaquetar
-      ? "Estado: **listo para empaquetar**."
-      : `Faltan **${state.metaProcesadaRestante}** de meta procesada para poder empaquetar.`
+      ? "Estado: **listo para empaquetar**. No hace falta esperar a 500."
+      : `Faltan **${state.metaProcesadaRestante}** de meta procesada para llegar a la guía de ${state.metaGuiaEmpaquetar}.`
   ].join("\n");
 }
 
