@@ -78,20 +78,21 @@ function buildMetaPanelContent(channelId = TARGET_CHANNEL_ID) {
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
-    `🧪 **Meta actual:** ${state.metaActual}/${META_MAXIMA_PROCESO}`,
-    `🎲 **Tiradas acumuladas:** ${state.tiradasPendientes}/${TIRADAS_PARA_PROCESAR}`,
-    `➕ **Cada tirada suma:** ${META_POR_TIRADA} de meta`,
+    `🧪 **Meta actual:** ${state.metaActual}/${state.metaCapacidadMaxima}`,
+    `🎲 **Guía para procesar:** ${state.metaGuiaProceso}`,
+    `➕ **Tiradas acumuladas:** ${state.tiradasPendientes}/${state.tiradasParaProcesar}`,
     "",
-    state.listoParaProcesar
-      ? "✅ **Estado:** listo para procesar."
-      : `⏳ **Estado:** faltan ${state.metaRestante} de meta para procesar.`,
+state.listoParaProcesar
+  ? "✅ **Estado:** listo para procesar. No hace falta esperar a 500."
+  : `⏳ **Estado:** faltan ${state.metaRestante} para llegar a la guía de ${state.metaGuiaProceso}.`,
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
-    `📦 **Meta procesada pendiente:** ${state.metaProcesadaPendiente}/${META_PARA_EMPAQUETAR}`,
-    state.listoParaEmpaquetar
-      ? "✅ **Empaquetado:** listo para empaquetar."
-      : `⏳ **Empaquetado:** faltan ${state.metaProcesadaRestante} de meta procesada.`
+    `📦 **Meta procesada pendiente:** ${state.metaProcesadaPendiente}/${state.metaCapacidadMaxima}`,
+    ` **Guía para empaquetar:** ${state.metaGuiaEmpaquetar}`,
+state.listoParaEmpaquetar
+  ? "✅ **Empaquetado:** listo para empaquetar. No hace falta esperar a 500."
+  : `⏳ **Empaquetado:** faltan ${state.metaProcesadaRestante} para llegar a la guía de ${state.metaGuiaEmpaquetar}.`
   ].join("\n");
 }
 
