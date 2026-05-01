@@ -30,13 +30,13 @@ module.exports = {
 
   TIMEZONE: process.env.TIMEZONE || "Europe/Madrid",
 
-META_POR_TIRADA,
-META_MAXIMA_PROCESO: META_GUIA_PROCESO, // compatibilidad con el código antiguo
-META_GUIA_PROCESO,
-META_CAPACIDAD_MAXIMA,
-TIRADAS_PARA_PROCESAR,
-META_PARA_EMPAQUETAR: META_GUIA_EMPAQUETAR, // compatibilidad con el código antiguo
-META_GUIA_EMPAQUETAR,
+  META_POR_TIRADA: Number(process.env.META_POR_TIRADA || 56),
+
+  META_MAXIMA_PROCESO: Number(process.env.META_MAXIMA_PROCESO || 448),
+
+  TIRADAS_PARA_PROCESAR: Number(process.env.TIRADAS_PARA_PROCESAR || 8),
+
+  META_PARA_EMPAQUETAR: Number(process.env.META_PARA_EMPAQUETAR || 448),
 
   TIRADA_COOLDOWN_MS: Number(process.env.TIRADA_COOLDOWN_MS || 70 * 60 * 1000),
 
