@@ -4,7 +4,6 @@ const fs = require("fs");
 const path = require("path");
 const XLSX = require("xlsx");
 
-const { sendWeeklyReport, startWeeklyReportScheduler } = require("./report");
 const {
   Client,
   GatewayIntentBits,
@@ -13,11 +12,14 @@ const {
 } = require("discord.js");
 
 const {
+  sendWeeklyReport,
+  startWeeklyReportScheduler
+} = require("./report");
+
+const {
   TARGET_CHANNEL_ID,
   TIMEZONE,
   META_POR_TIRADA,
-  META_MAXIMA_PROCESO,
-  TIRADAS_PARA_PROCESAR,
   META_PARA_EMPAQUETAR,
   TIRADA_COOLDOWN_MS
 } = require("./config");
@@ -25,18 +27,34 @@ const {
 const db = require("./db");
 const { buildTiradaRow } = require("./stats");
 const { createWebApp } = require("./webPlus");
-const { logAction, actionFromInteraction } = require("./services/actionLogService");
+
+const {
+  logAction,
+  actionFromInteraction
+} = require("./services/actionLogService");
+
 const {
   getLocalDateText,
   getMetaState,
   buildProcessStatusText,
-  buildPackagingStatusText,
-  buildUserPendingText
+  buildPackagingStatusText
 } = require("./services/metaService");
-const { refreshMetaPanel } = require("./services/panelService");
-const { memberHasAllowedRole } = require("./services/complianceService");
-const { handleGuildMemberUpdate } = require("./services/roleReviewService");
-const { sendMemberStatsDm } = require("./services/memberAuthService");
+
+const {
+  refreshMetaPanel
+} = require("./services/panelService");
+
+const {
+  memberHasAllowedRole
+} = require("./services/complianceService");
+
+const {
+  handleGuildMemberUpdate
+} = require("./services/roleReviewService");
+
+const {
+  sendMemberStatsDm
+} = require("./services/memberAuthService");
 
 const client = new Client({
   intents: [
@@ -47,10 +65,14 @@ const client = new Client({
 });
 
 const EXPORTS_DIR = path.join(process.cwd(), "exports");
-const WEEKLY_REPORT_CHANNEL_ID = process.env.WEEKLY_REPORT_CHANNEL_ID || process.env.TARGET_CHANNEL_ID;
+
+const WEEKLY_REPORT_CHANNEL_ID =
+  process.env.WEEKLY_REPORT_CHANNEL_ID || process.env.TARGET_CHANNEL_ID;
+
 const WEEKLY_REPORT_DAY = Number(process.env.WEEKLY_REPORT_DAY || 1);
 const WEEKLY_REPORT_HOUR = Number(process.env.WEEKLY_REPORT_HOUR || 10);
 const WEEKLY_REPORT_MINUTE = Number(process.env.WEEKLY_REPORT_MINUTE || 0);
+
 const PORT = Number(process.env.PORT || 3000);
 
 let cooldownPanelTimer = null;
@@ -58,18 +80,33 @@ let cooldownPanelTimer = null;
 function formatRemainingTime(ms) {
   const safeMs = Math.max(0, Number(ms || 0));
   const totalSeconds = Math.ceil(safeMs / 1000);
+
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
 
-  if (minutes <= 0) return `${seconds} s`;
+  if (minutes <= 0) {
+    return `${seconds} s`;
+  }
 
   return `${minutes} min ${seconds} s`;
 }
 
 function ensureExportsDir() {
   if (!fs.existsSync(EXPORTS_DIR)) {
-    fs.mkdirSync(EXPORTS_DIR, { recursive: true });
+    fs.mkdirSync(EXPORTS_DIR, {
+      recursive: true
+    });
   }
+}
+
+function getNextTiradaUnixFromLast(lastTirada) {
+  if (!lastTirada) return null;
+
+  const lastTime = new Date(lastTirada.timestamp_utc).getTime();
+
+  if (Number.isNaN(lastTime)) return null;
+
+  return Math.floor((lastTime + TIRADA_COOLDOWN_MS) / 1000);
 }
 
 function scheduleCooldownPanelRefresh() {
@@ -79,9 +116,11 @@ function scheduleCooldownPanelRefresh() {
   }
 
   const last = db.getLastButtonTiradaGlobal(TARGET_CHANNEL_ID);
+
   if (!last) return;
 
   const lastMs = new Date(last.timestamp_utc).getTime();
+
   if (Number.isNaN(lastMs)) return;
 
   const delay = lastMs + TIRADA_COOLDOWN_MS - Date.now() + 2000;
@@ -112,10 +151,15 @@ async function ensureMemberAllowed(interaction, actionName) {
 
   if (!member) {
     await logAction(client, {
-      ...actionFromInteraction(interaction, actionName, "blocked", "No se pudo comprobar el miembro.")
+      ...actionFromInteraction(
+        interaction,
+        actionName,
+        "blocked",
+        "No se pudo comprobar el miembro."
+      )
     });
 
-    await interaction.reply({
+    await replySafe(interaction, {
       content: "No se ha podido comprobar si sigues dentro del servidor.",
       flags: MessageFlags.Ephemeral
     });
@@ -125,10 +169,15 @@ async function ensureMemberAllowed(interaction, actionName) {
 
   if (!memberHasAllowedRole(member)) {
     await logAction(client, {
-      ...actionFromInteraction(interaction, actionName, "blocked", "No tiene un rol autorizado.")
+      ...actionFromInteraction(
+        interaction,
+        actionName,
+        "blocked",
+        "No tiene un rol autorizado."
+      )
     });
 
-    await interaction.reply({
+    await replySafe(interaction, {
       content: "No tienes un rango autorizado para usar este botón.",
       flags: MessageFlags.Ephemeral
     });
@@ -139,22 +188,18 @@ async function ensureMemberAllowed(interaction, actionName) {
   return true;
 }
 
-function getNextTiradaUnixFromLast(lastTirada) {
-  if (!lastTirada) return null;
-
-  const lastTime = new Date(lastTirada.timestamp_utc).getTime();
-  if (Number.isNaN(lastTime)) return null;
-
-  return Math.floor((lastTime + TIRADA_COOLDOWN_MS) / 1000);
-}
-
 async function handleTiradaButton(interaction) {
   if (interaction.channelId !== TARGET_CHANNEL_ID) {
     await logAction(client, {
-      ...actionFromInteraction(interaction, "tirada_click", "blocked", "Canal incorrecto.")
+      ...actionFromInteraction(
+        interaction,
+        "tirada_click",
+        "blocked",
+        "Canal incorrecto."
+      )
     });
 
-    await interaction.reply({
+    await replySafe(interaction, {
       content: "Este botón no corresponde a este canal.",
       flags: MessageFlags.Ephemeral
     });
@@ -167,6 +212,7 @@ async function handleTiradaButton(interaction) {
 
   const userId = interaction.user.id;
   const totalBefore = Number(db.getTotalByUser(userId));
+
   const lastTirada = db.getLastButtonTiradaGlobal(TARGET_CHANNEL_ID);
 
   if (lastTirada) {
@@ -178,7 +224,11 @@ async function handleTiradaButton(interaction) {
       const remaining = TIRADA_COOLDOWN_MS - elapsed;
 
       if (remaining > 0) {
-        const nombreUltimo = lastTirada.display_name || lastTirada.username || "otro usuario";
+        const nombreUltimo =
+          lastTirada.display_name ||
+          lastTirada.username ||
+          "otro usuario";
+
         const nextUnix = getNextTiradaUnixFromLast(lastTirada);
 
         await logAction(client, {
@@ -190,13 +240,13 @@ async function handleTiradaButton(interaction) {
           )
         });
 
-        await interaction.reply({
+        await replySafe(interaction, {
           content: [
             "Ahora no se puede hacer otra tirada.",
             "",
             `La última tirada la hizo **${nombreUltimo}**.`,
             nextUnix
-              ? `Tienes que esperar hasta **<t:${nextUnix}:R>** · hora: <t:${nextUnix}:t>.`
+              ? `Tienes que esperar hasta <t:${nextUnix}:R> · hora: <t:${nextUnix}:t>.`
               : `Tienes que esperar **${formatRemainingTime(remaining)}** para volver a pulsar +1 tirada.`,
             "",
             buildProcessStatusText(TARGET_CHANNEL_ID)
@@ -217,62 +267,19 @@ async function handleTiradaButton(interaction) {
   db.insertTirada(row);
 
   const totalAfter = Number(db.getTotalByUser(userId));
-const state = getMetaState(TARGET_CHANNEL_ID);
+  const state = getMetaState(TARGET_CHANNEL_ID);
+  const nextUnix = Math.floor((Date.now() + TIRADA_COOLDOWN_MS) / 1000);
 
-if (!state.listoParaProcesar) {
   await logAction(client, {
     ...actionFromInteraction(
       interaction,
-      "procesar_click",
-      "blocked",
-      `No se ha llegado a la guía de proceso. Meta actual: ${state.metaActual}/${state.metaGuiaProceso}.`
+      "tirada_accepted",
+      "success",
+      `Antes: ${totalBefore}. Después: ${totalAfter}. Meta actual: ${state.metaActual}/${state.metaMaximaProceso}.`
     )
   });
 
-  await interaction.reply({
-    content: [
-      "Todavía no se debe procesar.",
-      "",
-      `La guía es **${state.metaGuiaProceso}**. No hace falta esperar a **500**, pero tampoco se debería procesar antes de la guía.`,
-      "",
-      buildProcessStatusText(TARGET_CHANNEL_ID)
-    ].join("\n"),
-    flags: MessageFlags.Ephemeral
-  });
-
-  return;
-}
-
-await interaction.deferReply({
-  flags: MessageFlags.Ephemeral
-});
-
-const tiradasAProcesar = state.tiradasPendientes;
-const metaAProcesar = state.metaActual;
-
-db.processPendingTiradas({
-  channelId: TARGET_CHANNEL_ID,
-  cantidadTiradas: tiradasAProcesar,
-  metaTotal: metaAProcesar,
-  timestampUtc: new Date().toISOString(),
-  fechaLocal: getLocalDateText(new Date(), TIMEZONE),
-  guildId: interaction.guildId,
-  processorUserId: interaction.user.id,
-  processorUsername: interaction.user.username,
-  processorDisplayName:
-    interaction.member?.displayName ||
-    interaction.user.globalName ||
-    interaction.user.username
-});
-
-await logAction(client, {
-  ...actionFromInteraction(
-    interaction,
-    "procesar_success",
-    "success",
-    `Se han procesado ${metaAProcesar} de meta. Tiradas consumidas: ${tiradasAProcesar}.`
-  )
-});
+  await refreshMetaPanel(client);
   scheduleCooldownPanelRefresh();
 
   try {
@@ -283,15 +290,16 @@ await logAction(client, {
 
   await interaction.editReply({
     content: [
-      `Tirada registrada. Has sumado **${META_POR_TIRADA}** de metanfetamina.`,
+      "Tirada registrada.",
+      `Has sumado **${META_POR_TIRADA}** de metanfetamina.`,
       "",
       `Tu total acumulado es **${totalAfter}** tirada(s).`,
-      `Siguiente tirada: **<t:${nextUnix}:R>** · hora: <t:${nextUnix}:t>.`,
+      `Siguiente tirada: <t:${nextUnix}:R> · hora: <t:${nextUnix}:t>.`,
       "",
       buildProcessStatusText(TARGET_CHANNEL_ID),
       "",
       state.listoParaProcesar
-        ? "Ya se ha llegado al máximo. Ahora se puede pulsar **Procesar**."
+        ? "Ya se ha llegado a la guía. Ahora se puede pulsar **Procesar**."
         : "Podrá hacerse otra tirada cuando pase **1h 10min** desde esta."
     ].join("\n")
   });
@@ -300,10 +308,15 @@ await logAction(client, {
 async function handleProcesarButton(interaction) {
   if (interaction.channelId !== TARGET_CHANNEL_ID) {
     await logAction(client, {
-      ...actionFromInteraction(interaction, "procesar_click", "blocked", "Canal incorrecto.")
+      ...actionFromInteraction(
+        interaction,
+        "procesar_click",
+        "blocked",
+        "Canal incorrecto."
+      )
     });
 
-    await interaction.reply({
+    await replySafe(interaction, {
       content: "Este botón no corresponde a este canal.",
       flags: MessageFlags.Ephemeral
     });
@@ -316,80 +329,90 @@ async function handleProcesarButton(interaction) {
 
   const state = getMetaState(TARGET_CHANNEL_ID);
 
-if (!state.listoParaEmpaquetar) {
-  await logAction(client, {
-    ...actionFromInteraction(
-      interaction,
-      "empaquetar_click",
-      "blocked",
-      `No se ha llegado a la guía de empaquetado. Meta procesada: ${state.metaProcesadaPendiente}/${state.metaGuiaEmpaquetar}.`
-    )
-  });
+  if (!state.listoParaProcesar) {
+    await logAction(client, {
+      ...actionFromInteraction(
+        interaction,
+        "procesar_click",
+        "blocked",
+        `No se ha llegado a la guía de proceso. Meta actual: ${state.metaActual}/${state.metaMaximaProceso}.`
+      )
+    });
 
-  await interaction.reply({
-    content: [
-      "Todavía no se debe empaquetar.",
-      "",
-      `La guía es **${state.metaGuiaEmpaquetar}**. No hace falta esperar a **500**, pero tampoco se debería empaquetar antes de la guía.`,
-      "",
-      buildPackagingStatusText(TARGET_CHANNEL_ID)
-    ].join("\n"),
+    await replySafe(interaction, {
+      content: [
+        "Todavía no se debe procesar.",
+        "",
+        `La guía es **${state.metaMaximaProceso}**.`,
+        "No hace falta esperar a **500**, pero tampoco se debería procesar antes de la guía.",
+        "",
+        buildProcessStatusText(TARGET_CHANNEL_ID)
+      ].join("\n"),
+      flags: MessageFlags.Ephemeral
+    });
+
+    return;
+  }
+
+  await interaction.deferReply({
     flags: MessageFlags.Ephemeral
   });
 
-  return;
-}
+  const tiradasAProcesar = state.tiradasPendientes;
+  const metaAProcesar = state.metaActual;
 
-await interaction.deferReply({
-  flags: MessageFlags.Ephemeral
-});
+  db.processPendingTiradas({
+    channelId: TARGET_CHANNEL_ID,
+    cantidadTiradas: tiradasAProcesar,
+    metaTotal: metaAProcesar,
+    timestampUtc: new Date().toISOString(),
+    fechaLocal: getLocalDateText(new Date(), TIMEZONE),
+    guildId: interaction.guildId,
+    processorUserId: interaction.user.id,
+    processorUsername: interaction.user.username,
+    processorDisplayName:
+      interaction.member?.displayName ||
+      interaction.user.globalName ||
+      interaction.user.username
+  });
 
-const metaAempaquetar = state.metaProcesadaPendiente;
+  await logAction(client, {
+    ...actionFromInteraction(
+      interaction,
+      "procesar_success",
+      "success",
+      `Se han procesado ${metaAProcesar} de meta. Tiradas consumidas: ${tiradasAProcesar}.`
+    )
+  });
 
-db.packagePendingMeta({
-  channelId: TARGET_CHANNEL_ID,
-  metaAempaquetar,
-  timestampUtc: new Date().toISOString(),
-  fechaLocal: getLocalDateText(new Date(), TIMEZONE),
-  guildId: interaction.guildId,
-  packerUserId: interaction.user.id,
-  packerUsername: interaction.user.username,
-  packerDisplayName:
-    interaction.member?.displayName ||
-    interaction.user.globalName ||
-    interaction.user.username
-});
+  await refreshMetaPanel(client);
 
-await logAction(client, {
-  ...actionFromInteraction(
-    interaction,
-    "empaquetar_success",
-    "success",
-    `Se han empaquetado ${metaAempaquetar} de meta.`
-  )
-});
-
-await interaction.editReply({
-  content: [
-    "Proceso registrado correctamente.",
-    "",
-`Se han procesado **${metaAProcesar}** de metanfetamina.`,
-`Se han consumido **${tiradasAProcesar}** tiradas pendientes.`,
-    "",
-    buildPackagingStatusText(TARGET_CHANNEL_ID),
-    "",
-    "Ahora se puede pulsar **Empaquetar** si hay suficiente meta procesada."
-  ].join("\n")
-});
+  await interaction.editReply({
+    content: [
+      "Proceso registrado correctamente.",
+      "",
+      `Se han procesado **${metaAProcesar}** de metanfetamina.`,
+      `Se han consumido **${tiradasAProcesar}** tirada(s) pendiente(s).`,
+      "",
+      buildPackagingStatusText(TARGET_CHANNEL_ID),
+      "",
+      "Ahora se puede pulsar **Empaquetar** si hay suficiente meta procesada."
+    ].join("\n")
+  });
 }
 
 async function handleEmpaquetarButton(interaction) {
   if (interaction.channelId !== TARGET_CHANNEL_ID) {
     await logAction(client, {
-      ...actionFromInteraction(interaction, "empaquetar_click", "blocked", "Canal incorrecto.")
+      ...actionFromInteraction(
+        interaction,
+        "empaquetar_click",
+        "blocked",
+        "Canal incorrecto."
+      )
     });
 
-    await interaction.reply({
+    await replySafe(interaction, {
       content: "Este botón no corresponde a este canal.",
       flags: MessageFlags.Ephemeral
     });
@@ -404,12 +427,20 @@ async function handleEmpaquetarButton(interaction) {
 
   if (!state.listoParaEmpaquetar) {
     await logAction(client, {
-      ...actionFromInteraction(interaction, "empaquetar_click", "blocked", "No hay meta procesada suficiente para empaquetar.")
+      ...actionFromInteraction(
+        interaction,
+        "empaquetar_click",
+        "blocked",
+        `No se ha llegado a la guía de empaquetado. Meta procesada: ${state.metaProcesadaPendiente}/${state.metaParaEmpaquetar}.`
+      )
     });
 
-    await interaction.reply({
+    await replySafe(interaction, {
       content: [
-        "Todavía no se puede empaquetar.",
+        "Todavía no se debe empaquetar.",
+        "",
+        `La guía es **${state.metaParaEmpaquetar || META_PARA_EMPAQUETAR}**.`,
+        "No hace falta esperar a **500**, pero tampoco se debería empaquetar antes de la guía.",
         "",
         buildPackagingStatusText(TARGET_CHANNEL_ID)
       ].join("\n"),
@@ -423,9 +454,11 @@ async function handleEmpaquetarButton(interaction) {
     flags: MessageFlags.Ephemeral
   });
 
+  const metaAempaquetar = state.metaProcesadaPendiente;
+
   db.packagePendingMeta({
     channelId: TARGET_CHANNEL_ID,
-    metaAempaquetar: META_PARA_EMPAQUETAR,
+    metaAempaquetar,
     timestampUtc: new Date().toISOString(),
     fechaLocal: getLocalDateText(new Date(), TIMEZONE),
     guildId: interaction.guildId,
@@ -442,7 +475,7 @@ async function handleEmpaquetarButton(interaction) {
       interaction,
       "empaquetar_success",
       "success",
-      `Se han empaquetado ${META_PARA_EMPAQUETAR} de meta.`
+      `Se han empaquetado ${metaAempaquetar} de meta.`
     )
   });
 
@@ -460,7 +493,9 @@ async function handleEmpaquetarButton(interaction) {
 }
 
 function startWebPanel() {
-  const app = createWebApp({ client });
+  const app = createWebApp({
+    client
+  });
 
   app.listen(PORT, () => {
     console.log(`Panel web escuchando en puerto ${PORT}`);
@@ -560,6 +595,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.commandName === "tiradas_semana") {
         const anio = interaction.options.getInteger("anio", true);
         const semana = interaction.options.getInteger("semana", true);
+
         const rows = db.getByWeek(anio, semana);
         const total = rows.reduce((acc, row) => acc + Number(row.conteo || 0), 0);
 
@@ -577,7 +613,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const texto = top.length
           ? top
-              .map((item, index) => `${index + 1}. **${item.display_name || item.username}** — ${item.total}`)
+              .map((item, index) => {
+                const nombre = item.display_name || item.username || item.user_id;
+                return `${index + 1}. **${nombre}** — ${item.total}`;
+              })
               .join("\n")
           : "No hay tiradas registradas.";
 
@@ -608,6 +647,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const worksheet = XLSX.utils.json_to_sheet(rows);
         const workbook = XLSX.utils.book_new();
+
         XLSX.utils.book_append_sheet(workbook, worksheet, "Tiradas");
 
         const fileName = `tiradas_${Date.now()}.xlsx`;
@@ -671,8 +711,8 @@ client.on(Events.InteractionCreate, async interaction => {
         content: "Ha ocurrido un error.",
         flags: MessageFlags.Ephemeral
       });
-    } catch (e) {
-      console.error("No se pudo responder al error:", e);
+    } catch (replyError) {
+      console.error("No se pudo responder al error:", replyError);
     }
   }
 });
