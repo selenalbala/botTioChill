@@ -33,9 +33,14 @@ const {
   getMoneyConfig,
   setMoneyConfig,
   buildBonusSummary,
-  setUserWeekTotal
+  setUserWeekTotal,
+  recordCleanPayment,
+  getCleanPayments
 } = require("../services/metaMoneyService");
+const { getMetaState, setCurrentMeta, setProcessedMeta } = require("../services/metaService");
 const { refreshMetaPanel } = require("../services/panelService");
+const { logAction } = require("../services/actionLogService");
+const { refreshPaymentPanel, sendPaymentLog } = require("../services/paymentPanelService");
 
 function getPublicDir() {
   return path.join(__dirname, "..", "..", "web", "public");
@@ -79,6 +84,7 @@ async function buildPermissions(client, panelUser) {
   const discordRoleIds = member ? getMemberRoleIds(member).map(String) : [];
   const hasConfiguredStaffRole = discordRoleIds.some(roleId => STAFF_ROLE_ID_SET.has(roleId));
 
+  // No hace falta un rol genérico llamado "staff". Se validan los IDs configurados.
   const canStaff = hasConfiguredStaffRole || hasRole(panelUser, "staff");
   const canBoss = hasConfiguredStaffRole || hasRole(panelUser, "boss");
 
@@ -105,14 +111,7 @@ function attachCurrentUser(client) {
   return async (req, res, next) => {
     req.panelUser = getUserById(req.session.panelUserId);
     if (!req.panelUser || !req.panelUser.active) {
-      delete req.session.panelUserId;
-      delete req.session.panelRole;
-      delete req.session.panelUsername;
-      delete req.session.authenticated;
-      delete req.session.username;
-      delete req.session.memberAuthenticated;
-      delete req.session.memberUserId;
-      delete req.session.memberUsername;
+      req.session.panelUserId = null;
       return res.status(401).json({ ok: false, error: "Sesión caducada. Vuelve a iniciar sesión." });
     }
 
@@ -142,39 +141,6 @@ function eventToCalendar(salida) {
       creatorName: salida.creatorName
     }
   };
-}
-
-function mirrorPanelSessionToLegacySessions(req, user, permissions) {
-  req.session.panelUserId = user.id;
-  req.session.panelRole = user.role;
-  req.session.panelUsername = user.username;
-
-  /*
-    Puente con el panel antiguo de tiradas.
-    Sin esto, al entrar desde el panel nuevo como staff, el panel de tiradas
-    no reconoce la sesión y vuelve a pedir login.
-  */
-  if (permissions?.canStaff) {
-    req.session.authenticated = true;
-    req.session.username = user.username;
-  } else {
-    delete req.session.authenticated;
-    delete req.session.username;
-  }
-
-  /*
-    Puente con la vista de miembro.
-    Si el usuario web tiene Discord ID, puede ver su zona sin otro login.
-  */
-  if (user.discordUserId) {
-    req.session.memberAuthenticated = true;
-    req.session.memberUserId = user.discordUserId;
-    req.session.memberUsername = user.username;
-  } else {
-    delete req.session.memberAuthenticated;
-    delete req.session.memberUserId;
-    delete req.session.memberUsername;
-  }
 }
 
 async function notifySalidaToDiscord(client, salida, action, actor) {
@@ -207,6 +173,23 @@ async function notifySalidaToDiscord(client, salida, action, actor) {
 
   await channel.send({ content: lines.join("\n") });
   return true;
+}
+
+
+function panelActor(req) {
+  return {
+    userId: req.panelUser?.discordUserId || String(req.panelUser?.id || "panel-web"),
+    username: req.panelUser?.username || "panel-web",
+    displayName: req.panelUser?.displayName || req.panelUser?.username || "Panel web"
+  };
+}
+
+function parseInteger(value, fieldName) {
+  const number = Number(value);
+  if (!Number.isInteger(number)) {
+    throw new Error(`${fieldName} debe ser un número entero.`);
+  }
+  return number;
 }
 
 function attachPanelRoutes(app, { client } = {}) {
@@ -248,9 +231,9 @@ function attachPanelRoutes(app, { client } = {}) {
         return res.status(401).json({ ok: false, error: "Usuario o contraseña incorrectos." });
       }
 
-      const permissions = await buildPermissions(client, user);
-      mirrorPanelSessionToLegacySessions(req, user, permissions);
-
+      req.session.panelUserId = user.id;
+      req.session.panelRole = user.role;
+      req.session.panelUsername = user.username;
       req.session.save(error => {
         if (error) {
           console.error("[PANEL] Error guardando sesión:", error);
@@ -265,17 +248,9 @@ function attachPanelRoutes(app, { client } = {}) {
   });
 
   app.post("/api/panel/logout", requirePanelApi, (req, res) => {
-    delete req.session.panelUserId;
-    delete req.session.panelRole;
-    delete req.session.panelUsername;
-
-    delete req.session.authenticated;
-    delete req.session.username;
-
-    delete req.session.memberAuthenticated;
-    delete req.session.memberUserId;
-    delete req.session.memberUsername;
-
+    req.session.panelUserId = null;
+    req.session.panelRole = null;
+    req.session.panelUsername = null;
     req.session.save(() => res.json({ ok: true }));
   });
 
@@ -486,13 +461,153 @@ function attachPanelRoutes(app, { client } = {}) {
     }
   });
 
-  app.post("/api/panel/meta/bonus-config", requirePanelApi, withCurrentUser, requireConfiguredStaff(), (req, res) => {
+  app.post("/api/panel/meta/bonus-config", requirePanelApi, withCurrentUser, requireConfiguredStaff(), async (req, res) => {
     try {
       const config = setMoneyConfig({
         grossPerTirada: req.body.grossPerTirada,
         cleanDiscountPercent: req.body.cleanDiscountPercent
       });
+      await refreshPaymentPanel(client).catch(error => {
+        console.error("[PANEL] No se pudo refrescar el panel de pagos:", error.message);
+      });
       res.json({ ok: true, config });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+
+  app.get("/api/panel/meta/state", requirePanelApi, withCurrentUser, requireConfiguredStaff(), (req, res) => {
+    try {
+      res.json({ ok: true, meta: getMetaState(TARGET_CHANNEL_ID) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post("/api/panel/meta/current", requirePanelApi, withCurrentUser, requireConfiguredStaff(), async (req, res) => {
+    try {
+      const actor = panelActor(req);
+      const metaActual = parseInteger(req.body.metaActual, "La meta actual");
+      const result = setCurrentMeta(metaActual, {
+        userId: actor.userId,
+        username: actor.username,
+        displayName: actor.displayName,
+        guildId: process.env.GUILD_ID || "panel-web"
+      });
+
+      await logAction(client, {
+        guild_id: process.env.GUILD_ID || "panel-web",
+        channel_id: TARGET_CHANNEL_ID,
+        user_id: actor.userId,
+        username: actor.username,
+        display_name: actor.displayName,
+        action_type: "panel_meta_actual_adjust",
+        status: "success",
+        details: `Meta actual antes: ${result.beforeMeta}. Meta actual después: ${result.afterMeta}. Tiradas antes: ${result.beforeTiradas}. Tiradas después: ${result.afterTiradas}.`
+      });
+
+      await refreshMetaPanel(client).catch(error => {
+        console.error("[PANEL] No se pudo refrescar el panel de meta:", error.message);
+      });
+
+      res.json({ ok: true, result, meta: getMetaState(TARGET_CHANNEL_ID) });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post("/api/panel/meta/processed", requirePanelApi, withCurrentUser, requireConfiguredStaff(), async (req, res) => {
+    try {
+      const actor = panelActor(req);
+      const metaProcesada = parseInteger(req.body.metaProcesadaPendiente, "La meta procesada pendiente");
+      const result = setProcessedMeta(metaProcesada, {
+        userId: actor.userId,
+        username: actor.username,
+        displayName: actor.displayName,
+        guildId: process.env.GUILD_ID || "panel-web"
+      });
+
+      await logAction(client, {
+        guild_id: process.env.GUILD_ID || "panel-web",
+        channel_id: TARGET_CHANNEL_ID,
+        user_id: actor.userId,
+        username: actor.username,
+        display_name: actor.displayName,
+        action_type: "panel_meta_final_adjust",
+        status: "success",
+        details: `Meta procesada antes: ${result.beforeMetaProcesada}. Meta procesada después: ${result.afterMetaProcesada}. Ajuste: ${result.deltaMetaProcesada}.`
+      });
+
+      await refreshMetaPanel(client).catch(error => {
+        console.error("[PANEL] No se pudo refrescar el panel de meta:", error.message);
+      });
+
+      res.json({ ok: true, result, meta: getMetaState(TARGET_CHANNEL_ID) });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get("/api/panel/meta/payments", requirePanelApi, withCurrentUser, requireConfiguredStaff(), (req, res) => {
+    try {
+      res.json({ ok: true, payments: getCleanPayments({ userId: req.query.userId, limit: req.query.limit || 50 }) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post("/api/panel/meta/payments", requirePanelApi, withCurrentUser, requireConfiguredStaff(), async (req, res) => {
+    try {
+      const userId = String(req.body.userId || "").trim();
+      const amount = parseInteger(req.body.amount, "La cantidad pagada");
+      if (!userId) throw new Error("Debes seleccionar un miembro.");
+
+      const guild = await getMainGuild(client);
+      const beforeSummary = await buildBonusSummary({ guild, channelId: TARGET_CHANNEL_ID });
+      const beforeRow = beforeSummary.rows.find(row => String(row.userId) === userId);
+      const member = guild ? await guild.members.fetch(userId).catch(() => null) : null;
+      const actor = panelActor(req);
+
+      const payment = recordCleanPayment({
+        guildId: guild?.id || process.env.GUILD_ID || "panel-web",
+        channelId: "panel-web-pagos",
+        userId,
+        username: member?.user?.username || beforeRow?.username || userId,
+        displayName: member?.displayName || beforeRow?.displayName || userId,
+        amount,
+        actorUserId: actor.userId,
+        actorUsername: actor.username,
+        actorDisplayName: actor.displayName,
+        note: req.body.note || "Pago registrado desde panel web"
+      });
+
+      const afterSummary = await buildBonusSummary({ guild, channelId: TARGET_CHANNEL_ID });
+      const afterRow = afterSummary.rows.find(row => String(row.userId) === userId);
+
+      await logAction(client, {
+        guild_id: guild?.id || process.env.GUILD_ID || "panel-web",
+        channel_id: "panel-web-pagos",
+        user_id: userId,
+        username: payment.username,
+        display_name: payment.display_name,
+        action_type: "clean_money_payment",
+        status: "success",
+        details: `Pago registrado: ${amount}. Pendiente antes: ${beforeRow?.pendingCleanTotal || 0}. Pendiente después: ${afterRow?.pendingCleanTotal || 0}.`
+      });
+
+      await sendPaymentLog(client, payment, {
+        beforePending: beforeRow?.pendingCleanTotal || 0,
+        afterPending: afterRow?.pendingCleanTotal || 0
+      }).catch(error => {
+        console.error("[PANEL] No se pudo publicar log de pago:", error.message);
+      });
+
+      await refreshPaymentPanel(client).catch(error => {
+        console.error("[PANEL] No se pudo refrescar el panel de pagos:", error.message);
+      });
+
+      res.json({ ok: true, payment, pending: afterRow?.pendingCleanTotal || 0 });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
     }
@@ -510,6 +625,9 @@ function attachPanelRoutes(app, { client } = {}) {
 
       await refreshMetaPanel(client).catch(error => {
         console.error("[PANEL] No se pudo refrescar el panel de meta:", error.message);
+      });
+      await refreshPaymentPanel(client).catch(error => {
+        console.error("[PANEL] No se pudo refrescar el panel de pagos:", error.message);
       });
 
       res.json({ ok: true, result });
