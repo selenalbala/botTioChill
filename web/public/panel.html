@@ -8,47 +8,53 @@
   <link rel="stylesheet" href="/static/panel.css" />
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-icon">🏍️</div>
-        <div>
-          <strong>𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏%</strong>
-          <span>Panel interno</span>
-        </div>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">1%</div>
+      <div>
+        <strong>𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒</strong>
+        <span>Panel interno</span>
       </div>
+    </div>
 
-      <nav class="nav">
-        <button class="nav-item active" type="button" data-tab="calendarTab">📅 Calendario</button>
-        <button class="nav-item" type="button" data-tab="salidasTab">🏍️ Salidas</button>
-        <button class="nav-item boss-only" type="button" data-tab="usersTab">👥 Miembros</button>
-        <a class="nav-link staff-only" href="/">📊 Panel tiradas</a>
-        <a class="nav-link staff-only" href="/cuentas-miembros">🔐 Cuentas miembros</a>
-        <a class="nav-link member-meta-link" href="/mi-meta">🙋 Mi meta</a>
-      </nav>
+    <nav class="nav">
+      <button class="nav-item active" data-tab="calendarTab">Calendario</button>
+      <button class="nav-item" data-tab="salidasTab">Salidas</button>
+      <button class="nav-item" data-tab="moneyTab">Meta y pagos</button>
+      <a class="nav-link" href="/">Panel tiradas</a>
+      <a class="nav-link" href="/cuentas-miembros">Cuentas miembros</a>
+      <button class="nav-item boss-only" data-tab="usersTab">Usuarios</button>
+    </nav>
+  </aside>
 
-      <div class="user-card">
-        <small>Conectado como</small>
-        <strong id="currentDisplayName">Cargando...</strong>
-        <span id="currentRole" class="role-pill">-</span>
-        <button id="logoutBtn" type="button" class="ghost full-button">Cerrar sesión</button>
+  <main class="layout">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Rojo / negro</p>
+        <h1 id="pageTitle">Calendario de salidas</h1>
+        <p id="pageSubtitle">Vista mensual tipo calendario.</p>
       </div>
-    </aside>
-
-    <main class="main">
-      <header class="topbar-panel">
+      <div class="user-box">
         <div>
-          <p class="eyebrow">𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏%</p>
-          <h1 id="pageTitle">Calendario de salidas</h1>
-          <p id="pageSubtitle">Vista mensual tipo Google Calendar.</p>
+          <strong id="currentDisplayName">Cargando...</strong>
+          <span id="currentRole">-</span>
         </div>
-        <button id="openCreateSalidaBtn" class="primary boss-only" type="button">+ Crear salida</button>
-      </header>
+        <button id="logoutBtn" class="btn-secondary">Cerrar sesión</button>
+      </div>
+    </header>
 
-      <div id="statusMessage" class="status" aria-live="polite"></div>
+    <section class="content">
+      <div id="statusMessage" class="status"></div>
 
       <section id="calendarTab" class="tab active">
-        <div class="card calendar-card">
+        <div class="card card-header-row">
+          <div>
+            <h2>Calendario de salidas</h2>
+            <p>Todos pueden ver las salidas y votar si van o no. Los roles autorizados pueden crearlas.</p>
+          </div>
+          <button id="openCreateSalidaBtn" class="staff-only">+ Crear salida</button>
+        </div>
+        <div class="card">
           <div id="calendar"></div>
         </div>
       </section>
@@ -56,16 +62,72 @@
       <section id="salidasTab" class="tab">
         <div class="grid two">
           <div class="card">
-            <div class="card-title">
-              <h2>Próximas salidas</h2>
-              <button id="refreshSalidasBtn" class="ghost" type="button">Actualizar</button>
+            <div class="card-header-row">
+              <div>
+                <h2>Próximas salidas</h2>
+                <p>Selecciona una salida para ver asistentes, comentarios y votos.</p>
+              </div>
+              <button id="refreshSalidasBtn" class="btn-secondary">Actualizar</button>
             </div>
-            <div id="salidasList" class="salidas-list"></div>
+            <div id="salidasList" class="list"></div>
           </div>
 
           <div class="card">
             <h2>Detalle</h2>
-            <div id="salidaDetail" class="empty-state">Selecciona una salida del calendario o de la lista.</div>
+            <div id="salidaDetail" class="detail muted-box">Selecciona una salida del calendario o de la lista.</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="moneyTab" class="tab">
+        <div class="grid stats">
+          <div class="stat-card"><span>Miembros</span><strong id="bonusMembers">0</strong></div>
+          <div class="stat-card"><span>Tiradas extra</span><strong id="bonusExtras">0</strong></div>
+          <div class="stat-card"><span>Total limpio</span><strong id="bonusCleanTotal">0</strong></div>
+          <div class="stat-card"><span>Limpio/tirada</span><strong id="bonusCleanEach">0</strong></div>
+        </div>
+
+        <div class="card staff-only">
+          <div class="card-header-row">
+            <div>
+              <h2>Configuración del dinero</h2>
+              <p>Por defecto: 40.000 por tirada, quitando 25%, queda 30.000 limpio.</p>
+            </div>
+          </div>
+          <form id="bonusConfigForm" class="form-grid compact">
+            <label>Importe bruto por tirada
+              <input id="grossPerTirada" type="number" min="0" step="1000" value="40000" />
+            </label>
+            <label>Porcentaje que se quita
+              <input id="cleanDiscountPercent" type="number" min="0" max="100" step="0.1" value="25" />
+            </label>
+            <button type="submit">Guardar cálculo</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header-row">
+            <div>
+              <h2 id="bonusTitle">Pagos por excedente</h2>
+              <p id="bonusSubtitle">Se calcula con el mayor excedente entre diario y semanal: más de 2 al día o más de 14 a la semana.</p>
+            </div>
+            <button id="refreshBonusBtn" class="btn-secondary">Actualizar</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Miembro</th>
+                  <th>Semana</th>
+                  <th>Extra diario</th>
+                  <th>Extra semanal</th>
+                  <th>Extra pagado</th>
+                  <th>Dinero limpio</th>
+                  <th class="staff-only">Modificar semana</th>
+                </tr>
+              </thead>
+              <tbody id="bonusTable"></tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -76,97 +138,49 @@
             <h2>Crear / editar usuario</h2>
             <form id="userForm" class="form-grid">
               <input id="userId" type="hidden" />
-
-              <label>
-                Usuario web
-                <input id="userUsername" type="text" autocomplete="off" required />
-              </label>
-
-              <label>
-                Nombre visible
-                <input id="userDisplayName" type="text" autocomplete="off" />
-              </label>
-
-              <label>
-                ID Discord
-                <input id="userDiscordId" type="text" inputmode="numeric" autocomplete="off" />
-              </label>
-
-              <label>
-                Rol
+              <label>Usuario web <input id="userUsername" autocomplete="off" /></label>
+              <label>Nombre visible <input id="userDisplayName" autocomplete="off" /></label>
+              <label>ID Discord <input id="userDiscordId" autocomplete="off" /></label>
+              <label>Rol
                 <select id="userRole">
                   <option value="member">Miembro</option>
-                  <option value="staff">Staff</option>
+                  <option value="staff">Autorizado</option>
                   <option value="boss">Jefe</option>
                 </select>
               </label>
-
-              <label>
-                Contraseña
-                <input id="userPassword" type="password" autocomplete="new-password" placeholder="Obligatoria al crear. Opcional al editar." />
-              </label>
-
-              <label class="checkbox-line">
-                <input id="userActive" type="checkbox" checked />
-                Activo
-              </label>
-
-              <div class="form-actions">
-                <button class="primary" type="submit">Guardar usuario</button>
-                <button id="clearUserFormBtn" class="ghost" type="button">Limpiar</button>
-              </div>
+              <label>Contraseña <input id="userPassword" type="password" autocomplete="new-password" /></label>
+              <label class="check"><input id="userActive" type="checkbox" checked /> Activo</label>
+              <button type="submit">Guardar usuario</button>
+              <button type="button" id="clearUserFormBtn" class="btn-secondary">Limpiar</button>
             </form>
           </div>
 
           <div class="card">
-            <div class="card-title">
+            <div class="card-header-row">
               <h2>Miembros web</h2>
-              <button id="refreshUsersBtn" class="ghost" type="button">Actualizar</button>
+              <button id="refreshUsersBtn" class="btn-secondary">Actualizar</button>
             </div>
-            <div id="usersTable" class="table-wrap"></div>
+            <div id="usersTable" class="table-like"></div>
           </div>
         </div>
       </section>
-    </main>
-  </div>
+    </section>
+  </main>
 
   <dialog id="salidaDialog" class="dialog">
     <form id="salidaForm" method="dialog">
-      <div class="dialog-title">
+      <div class="dialog-head">
         <h2 id="salidaDialogTitle">Crear salida</h2>
-        <button id="closeSalidaDialogBtn" class="icon-btn ghost" type="button" aria-label="Cerrar">×</button>
+        <button type="button" id="closeSalidaDialogBtn" class="icon-btn">×</button>
       </div>
-
       <input id="salidaId" type="hidden" />
-
       <div class="form-grid">
-        <label>
-          Título
-          <input id="salidaTitle" type="text" required />
-        </label>
-
-        <label>
-          Lugar
-          <input id="salidaLocation" type="text" />
-        </label>
-
-        <label>
-          Inicio
-          <input id="salidaStartsAt" type="datetime-local" required />
-        </label>
-
-        <label>
-          Fin
-          <input id="salidaEndsAt" type="datetime-local" />
-        </label>
-
-        <label class="full-width">
-          Descripción
-          <textarea id="salidaDescription" rows="4"></textarea>
-        </label>
-
-        <label>
-          Estado
+        <label>Título <input id="salidaTitle" required maxlength="120" /></label>
+        <label>Lugar <input id="salidaLocation" maxlength="160" /></label>
+        <label>Inicio <input id="salidaStartsAt" type="datetime-local" required /></label>
+        <label>Fin <input id="salidaEndsAt" type="datetime-local" /></label>
+        <label class="wide">Descripción <textarea id="salidaDescription" rows="4"></textarea></label>
+        <label>Estado
           <select id="salidaStatus">
             <option value="open">Abierta</option>
             <option value="closed">Cerrada</option>
@@ -174,16 +188,14 @@
           </select>
         </label>
       </div>
-
-      <div class="form-actions dialog-actions">
-        <button class="primary" type="submit">Guardar salida</button>
-        <button id="cancelSalidaBtn" class="danger-button" type="button">Cancelar salida</button>
+      <div class="dialog-actions">
+        <button type="submit">Guardar salida</button>
+        <button type="button" id="cancelSalidaBtn" class="danger-btn">Cancelar salida</button>
       </div>
     </form>
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/locales-all.global.min.js"></script>
   <script src="/static/panel.js"></script>
 </body>
 </html>

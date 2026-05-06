@@ -1,18 +1,10 @@
 let currentUser = null;
 let calendar = null;
 let selectedSalidaId = null;
+let lastUsers = [];
 
-const ROLE_NAMES = {
-  member: "Miembro",
-  staff: "Staff",
-  boss: "Jefe"
-};
-
-const VOTE_LABELS = {
-  going: "✅ Va",
-  not_going: "❌ No va",
-  maybe: "❔ Dudoso"
-};
+const ROLE_NAMES = { member: "Miembro", staff: "Autorizado", boss: "Jefe" };
+const VOTE_LABELS = { going: "✅ Va", not_going: "❌ No va", maybe: "❔ Dudoso" };
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -27,11 +19,11 @@ function formatDate(value) {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("es-ES", { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
 
-  return new Intl.DateTimeFormat("es-ES", {
-    dateStyle: "medium",
-    timeStyle: "short"
-  }).format(date);
+function formatMoney(value) {
+  return new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 }).format(Number(value || 0));
 }
 
 function statusText(status) {
@@ -50,24 +42,18 @@ function setStatus(message, type = "") {
 
 async function fetchJson(url, options = {}) {
   const res = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    },
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options
   });
 
   const data = await res.json().catch(() => ({ ok: false, error: "Respuesta no válida." }));
-
   if (!res.ok || data.ok === false) {
     if (res.status === 401) {
       window.location.href = "/panel/login";
       return null;
     }
-
     throw new Error(data.error || `Error HTTP ${res.status}`);
   }
-
   return data;
 }
 
@@ -75,21 +61,16 @@ function isBoss() {
   return currentUser?.role === "boss";
 }
 
-function isStaffOrBoss() {
-  return currentUser?.role === "boss" || currentUser?.role === "staff";
+function canStaff() {
+  return Boolean(currentUser?.permissions?.canStaff || currentUser?.role === "boss" || currentUser?.role === "staff");
 }
 
 function showRoleSections() {
   document.querySelectorAll(".boss-only").forEach(el => {
     el.style.display = isBoss() ? "" : "none";
   });
-
   document.querySelectorAll(".staff-only").forEach(el => {
-    el.style.display = isStaffOrBoss() ? "" : "none";
-  });
-
-  document.querySelectorAll(".member-meta-link").forEach(el => {
-    el.style.display = currentUser?.discordUserId ? "" : "none";
+    el.style.display = canStaff() ? "" : "none";
   });
 }
 
@@ -99,41 +80,33 @@ function setActiveTab(tabId) {
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.tab === tabId);
   });
-
   document.querySelectorAll(".tab").forEach(tab => {
     tab.classList.toggle("active", tab.id === tabId);
   });
 
   const titles = {
-    calendarTab: ["Calendario de salidas", "Vista mensual tipo Google Calendar."],
+    calendarTab: ["Calendario de salidas", "Vista mensual tipo calendario."],
     salidasTab: ["Salidas", "Vota, comenta y revisa asistentes."],
-    usersTab: ["Miembros", "Crea usuarios, cambia roles y resetea contraseñas."]
+    moneyTab: ["Meta y pagos", canStaff() ? "Control de excedentes y dinero limpio." : "Tu resumen personal de excedentes."],
+    usersTab: ["Usuarios", "Crea usuarios, cambia roles y resetea contraseñas."]
   };
 
   const [title, subtitle] = titles[tabId] || titles.calendarTab;
   document.getElementById("pageTitle").textContent = title;
   document.getElementById("pageSubtitle").textContent = subtitle;
 
-  if (tabId === "calendarTab" && calendar) {
-    setTimeout(() => calendar.updateSize(), 50);
-  }
-
-  if (tabId === "salidasTab") {
-    loadSalidasList().catch(error => setStatus(error.message, "error"));
-  }
-
-  if (tabId === "usersTab") {
-    loadUsers().catch(error => setStatus(error.message, "error"));
-  }
+  if (tabId === "calendarTab" && calendar) setTimeout(() => calendar.updateSize(), 50);
+  if (tabId === "salidasTab") loadSalidasList().catch(error => setStatus(error.message, "error"));
+  if (tabId === "moneyTab") loadBonus().catch(error => setStatus(error.message, "error"));
+  if (tabId === "usersTab") loadUsers().catch(error => setStatus(error.message, "error"));
 }
 
 async function loadMe() {
   const data = await fetchJson("/api/panel/me");
   if (!data) return;
-
   currentUser = data.user;
   document.getElementById("currentDisplayName").textContent = currentUser.displayName || currentUser.username;
-  document.getElementById("currentRole").textContent = ROLE_NAMES[currentUser.role] || currentUser.role;
+  document.getElementById("currentRole").textContent = canStaff() ? "Autorizado" : (ROLE_NAMES[currentUser.role] || currentUser.role);
   showRoleSections();
 }
 
@@ -147,11 +120,7 @@ function initCalendar() {
     height: "auto",
     firstDay: 1,
     nowIndicator: true,
-    eventTimeFormat: {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false
-    },
+    eventTimeFormat: { hour: "2-digit", minute: "2-digit", hour12: false },
     headerToolbar: {
       left: "prev,next today",
       center: "title",
@@ -178,19 +147,16 @@ async function loadSalidasList() {
   if (!data) return;
 
   const box = document.getElementById("salidasList");
-
   if (!data.salidas.length) {
-    box.innerHTML = `<div class="empty-state">No hay salidas registradas todavía.</div>`;
+    box.innerHTML = `<div class="muted-box">No hay salidas registradas todavía.</div>`;
     return;
   }
 
   box.innerHTML = data.salidas.map(salida => `
-    <button class="salida-row ${Number(selectedSalidaId) === Number(salida.id) ? "active" : ""}" type="button" data-salida-id="${salida.id}">
-      <span>
-        <strong>${escapeHtml(salida.title)}</strong>
-        <small>${escapeHtml(salida.location || "Sin lugar")} · ${formatDate(salida.startsAt)}</small>
-      </span>
-      <span class="pill ${escapeHtml(salida.status)}">${statusText(salida.status)}</span>
+    <button class="list-item ${String(salida.status)}" data-salida-id="${salida.id}">
+      <strong>${escapeHtml(salida.title)}</strong>
+      <span>${escapeHtml(salida.location || "Sin lugar")} · ${formatDate(salida.startsAt)}</span>
+      <em>${statusText(salida.status)}</em>
     </button>
   `).join("");
 
@@ -205,45 +171,35 @@ async function loadSalidasList() {
 
 function renderVotes(votes) {
   const groups = { going: [], maybe: [], not_going: [] };
-
   for (const vote of votes || []) {
     if (groups[vote.status]) groups[vote.status].push(vote);
   }
 
-  return `
-    <div class="votes-grid">
-      ${Object.entries(groups).map(([status, items]) => `
-        <div class="vote-column">
-          <h4>${VOTE_LABELS[status]} <span>${items.length}</span></h4>
-          ${items.length ? items.map(item => `
-            <div class="mini-user">
-              <strong>${escapeHtml(item.displayName || item.username)}</strong>
-              <small>${escapeHtml(ROLE_NAMES[item.role] || item.role)}</small>
-            </div>
-          `).join("") : `<div class="muted">Sin respuestas</div>`}
+  return Object.entries(groups).map(([status, items]) => `
+    <div class="vote-group">
+      <h4>${VOTE_LABELS[status]} ${items.length}</h4>
+      ${items.length ? items.map(item => `
+        <div class="mini-row">
+          <strong>${escapeHtml(item.displayName || item.username)}</strong>
+          <span>${escapeHtml(ROLE_NAMES[item.role] || item.role)}</span>
         </div>
-      `).join("")}
+      `).join("") : `<p class="muted">Sin respuestas</p>`}
     </div>
-  `;
+  `).join("");
 }
 
 function renderComments(comments) {
-  if (!comments || !comments.length) {
-    return `<div class="empty-state">Sin comentarios todavía.</div>`;
-  }
+  if (!comments || !comments.length) return `<p class="muted">Sin comentarios todavía.</p>`;
 
   return comments.map(comment => {
-    const canDelete = isStaffOrBoss() || Number(comment.userId) === Number(currentUser.id);
-
+    const canDelete = canStaff() || Number(comment.userId) === Number(currentUser.id);
     return `
-      <article class="comment">
-        <div class="comment-head">
-          <strong>${escapeHtml(comment.displayName || comment.username)}</strong>
-          <small>${formatDate(comment.createdAt)}</small>
-        </div>
+      <div class="comment">
+        <strong>${escapeHtml(comment.displayName || comment.username)}</strong>
+        <span>${formatDate(comment.createdAt)}</span>
         <p>${escapeHtml(comment.comment)}</p>
-        ${canDelete ? `<button class="text-danger" type="button" data-delete-comment="${comment.id}">Borrar</button>` : ""}
-      </article>
+        ${canDelete ? `<button class="btn-secondary small" data-delete-comment="${comment.id}">Borrar</button>` : ""}
+      </div>
     `;
   }).join("");
 }
@@ -252,45 +208,38 @@ async function loadSalidaDetail(id) {
   const data = await fetchJson(`/api/panel/salidas/${id}`);
   if (!data) return;
 
-  const { salida, counts, myVote, votes, comments } = data;
+  const { salida, counts, votes, comments } = data;
   selectedSalidaId = salida.id;
 
-  const voteStatus = myVote?.status || "";
   const detail = document.getElementById("salidaDetail");
-
-  detail.className = "salida-detail";
+  detail.className = "detail";
   detail.innerHTML = `
-    <div class="detail-header">
+    <div class="detail-head">
       <div>
         <h3>${escapeHtml(salida.title)}</h3>
         <p>${escapeHtml(salida.description || "Sin descripción")}</p>
       </div>
-      <span class="pill ${escapeHtml(salida.status)}">${statusText(salida.status)}</span>
+      <span class="pill">${statusText(salida.status)}</span>
     </div>
-
-    <div class="detail-meta">
-      <span>📍 ${escapeHtml(salida.location || "Sin lugar")}</span>
-      <span>🕒 ${formatDate(salida.startsAt)}${salida.endsAt ? ` - ${formatDate(salida.endsAt)}` : ""}</span>
-      <span>👤 ${escapeHtml(salida.creatorName || "Jefe")}</span>
-    </div>
+    <div class="meta-line">📍 ${escapeHtml(salida.location || "Sin lugar")}</div>
+    <div class="meta-line">🗓️ ${formatDate(salida.startsAt)}${salida.endsAt ? ` - ${formatDate(salida.endsAt)}` : ""}</div>
+    <div class="meta-line">👤 ${escapeHtml(salida.creatorName || "Autorizado")}</div>
 
     <div class="vote-actions">
-      <button type="button" class="${voteStatus === "going" ? "selected" : ""}" data-vote="going">✅ Voy (${counts.going})</button>
-      <button type="button" class="${voteStatus === "not_going" ? "selected" : ""}" data-vote="not_going">❌ No voy (${counts.notGoing})</button>
-      <button type="button" class="${voteStatus === "maybe" ? "selected" : ""}" data-vote="maybe">❔ Dudoso (${counts.maybe})</button>
-      ${isBoss() ? `<button type="button" class="ghost" data-edit-salida>Editar salida</button>` : ""}
+      <button data-vote="going">✅ Voy (${counts.going})</button>
+      <button data-vote="not_going" class="danger-btn">❌ No voy (${counts.notGoing})</button>
+      <button data-vote="maybe" class="btn-secondary">❔ Dudoso (${counts.maybe})</button>
+      ${canStaff() ? `<button data-edit-salida class="btn-secondary">Editar salida</button>` : ""}
     </div>
 
-    ${renderVotes(votes)}
+    <div class="votes-grid">${renderVotes(votes)}</div>
 
-    <div class="comments-section">
-      <h4>Comentarios</h4>
-      <form id="commentForm" class="comment-form">
-        <input id="commentInput" type="text" placeholder="Escribe un comentario..." required maxlength="500" />
-        <button class="primary" type="submit">Comentar</button>
-      </form>
-      <div>${renderComments(comments)}</div>
-    </div>
+    <h4>Comentarios</h4>
+    <form id="commentForm" class="comment-form">
+      <input id="commentInput" placeholder="Escribe un comentario..." required maxlength="1000" />
+      <button type="submit">Comentar</button>
+    </form>
+    <div class="comments">${renderComments(comments)}</div>
   `;
 
   detail.querySelectorAll("[data-vote]").forEach(button => {
@@ -300,7 +249,6 @@ async function loadSalidaDetail(id) {
           method: "POST",
           body: JSON.stringify({ status: button.dataset.vote })
         });
-
         setStatus("Voto guardado.", "ok");
         await loadSalidaDetail(salida.id);
         await loadSalidasList();
@@ -312,20 +260,16 @@ async function loadSalidaDetail(id) {
   });
 
   const editButton = detail.querySelector("[data-edit-salida]");
-  if (editButton) {
-    editButton.addEventListener("click", () => openEditSalidaDialog(salida));
-  }
+  if (editButton) editButton.addEventListener("click", () => openEditSalidaDialog(salida));
 
   detail.querySelector("#commentForm").addEventListener("submit", async event => {
     event.preventDefault();
     const input = document.getElementById("commentInput");
-
     try {
       await fetchJson(`/api/panel/salidas/${salida.id}/comments`, {
         method: "POST",
         body: JSON.stringify({ comment: input.value })
       });
-
       input.value = "";
       setStatus("Comentario añadido.", "ok");
       await loadSalidaDetail(salida.id);
@@ -337,12 +281,8 @@ async function loadSalidaDetail(id) {
   detail.querySelectorAll("[data-delete-comment]").forEach(button => {
     button.addEventListener("click", async () => {
       if (!confirm("¿Borrar este comentario?")) return;
-
       try {
-        await fetchJson(`/api/panel/comments/${button.dataset.deleteComment}`, {
-          method: "DELETE"
-        });
-
+        await fetchJson(`/api/panel/comments/${button.dataset.deleteComment}`, { method: "DELETE" });
         setStatus("Comentario borrado.", "ok");
         await loadSalidaDetail(salida.id);
       } catch (error) {
@@ -392,7 +332,6 @@ function openEditSalidaDialog(salida) {
 
 async function saveSalida(event) {
   event.preventDefault();
-
   const id = document.getElementById("salidaId").value;
   const payload = {
     title: document.getElementById("salidaTitle").value,
@@ -407,8 +346,7 @@ async function saveSalida(event) {
     const url = id ? `/api/panel/salidas/${id}` : "/api/panel/salidas";
     const method = id ? "PATCH" : "POST";
     const data = await fetchJson(url, { method, body: JSON.stringify(payload) });
-
-    setStatus(id ? "Salida actualizada." : "Salida creada.", "ok");
+    setStatus(id ? "Salida actualizada." : "Salida creada y avisada en Discord.", "ok");
     document.getElementById("salidaDialog").close();
     selectedSalidaId = data.salida.id;
     calendar?.refetchEvents();
@@ -430,7 +368,6 @@ async function cancelSelectedSalida() {
       method: "POST",
       body: JSON.stringify({ status: "cancelled" })
     });
-
     setStatus("Salida cancelada.", "ok");
     document.getElementById("salidaDialog").close();
     calendar?.refetchEvents();
@@ -441,56 +378,122 @@ async function cancelSelectedSalida() {
   }
 }
 
-async function loadUsers() {
-  if (!isBoss()) return;
+function renderDayBadges(days) {
+  return `<div class="day-badges">${(days || []).map(day => `
+    <span title="${escapeHtml(day.fecha)}" class="${day.total >= 2 ? "ok" : "bad"}">${day.total}</span>
+  `).join("")}</div>`;
+}
 
-  const data = await fetchJson("/api/panel/users");
+async function loadBonus() {
+  const url = canStaff() ? "/api/panel/meta/bonus" : "/api/panel/meta/bonus/me";
+  const data = await fetchJson(url);
   if (!data) return;
 
-  const box = document.getElementById("usersTable");
+  document.getElementById("bonusMembers").textContent = data.totals.members;
+  document.getElementById("bonusExtras").textContent = data.totals.extraTiradas;
+  document.getElementById("bonusCleanTotal").textContent = formatMoney(data.totals.cleanTotal);
+  document.getElementById("bonusCleanEach").textContent = formatMoney(data.moneyConfig.cleanPerTirada);
+  document.getElementById("bonusTitle").textContent = canStaff() ? "Pagos por excedente" : "Tu pago por excedente";
+  document.getElementById("bonusSubtitle").textContent = `Semana ${data.range.start} a ${data.range.end}. Obligación: ${data.dailyRequired}/día o ${data.weeklyRequired}/semana.`;
 
-  if (!data.users.length) {
-    box.innerHTML = `<div class="empty-state">No hay usuarios.</div>`;
+  if (canStaff()) {
+    document.getElementById("grossPerTirada").value = data.moneyConfig.grossPerTirada;
+    document.getElementById("cleanDiscountPercent").value = data.moneyConfig.cleanDiscountPercent;
+  }
+
+  const tbody = document.getElementById("bonusTable");
+  if (!data.rows.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">No hay miembros para mostrar.</td></tr>`;
     return;
   }
 
-  box.innerHTML = `
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Nombre</th>
-          <th>Usuario</th>
-          <th>Rol</th>
-          <th>Estado</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.users.map(user => `
-          <tr>
-            <td>
-              <strong>${escapeHtml(user.displayName)}</strong><br />
-              <small>${escapeHtml(user.discordUserId || "sin Discord ID")}</small>
-            </td>
-            <td>${escapeHtml(user.username)}</td>
-            <td>${escapeHtml(ROLE_NAMES[user.role] || user.role)}</td>
-            <td>${user.active ? "Activo" : "Desactivado"}</td>
-            <td>
-              <div class="actions">
-                <button type="button" data-edit-user="${escapeHtml(JSON.stringify(user))}">Editar</button>
-                <button type="button" data-reset-password="${user.id}">Contraseña</button>
-              </div>
-            </td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  `;
+  tbody.innerHTML = data.rows.map(row => `
+    <tr>
+      <td>
+        <strong>${escapeHtml(row.displayName)}</strong>
+        <span class="sub">${escapeHtml(row.username)} · ${escapeHtml(row.userId)}</span>
+        ${renderDayBadges(row.days)}
+      </td>
+      <td><strong>${row.weekTotal}/${row.weeklyRequired}</strong><span class="sub ${row.weeklyOk ? "ok-text" : "bad-text"}">${row.weeklyOk ? "Cumple semanal" : "Pendiente semanal"}</span></td>
+      <td>${row.extraByDaily}</td>
+      <td>${row.extraByWeekly}</td>
+      <td><strong>${row.extraTiradas}</strong></td>
+      <td><strong>${formatMoney(row.cleanTotal)}</strong><span class="sub">${formatMoney(row.cleanPerTirada)} limpio/tirada</span></td>
+      <td class="staff-only adjust-cell">
+        <input type="number" min="0" step="1" value="${row.weekTotal}" data-week-total="${escapeHtml(row.userId)}" />
+        <button class="small" data-save-week-total="${escapeHtml(row.userId)}">Guardar</button>
+      </td>
+    </tr>
+  `).join("");
+
+  showRoleSections();
+
+  tbody.querySelectorAll("[data-save-week-total]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const userId = button.dataset.saveWeekTotal;
+      const input = tbody.querySelector(`[data-week-total="${CSS.escape(userId)}"]`);
+      try {
+        await fetchJson(`/api/panel/meta/members/${encodeURIComponent(userId)}/week-total`, {
+          method: "POST",
+          body: JSON.stringify({ total: Number(input.value) })
+        });
+        setStatus("Tiradas semanales modificadas.", "ok");
+        await loadBonus();
+      } catch (error) {
+        setStatus(error.message, "error");
+      }
+    });
+  });
+}
+
+async function saveBonusConfig(event) {
+  event.preventDefault();
+  try {
+    await fetchJson("/api/panel/meta/bonus-config", {
+      method: "POST",
+      body: JSON.stringify({
+        grossPerTirada: Number(document.getElementById("grossPerTirada").value),
+        cleanDiscountPercent: Number(document.getElementById("cleanDiscountPercent").value)
+      })
+    });
+    setStatus("Configuración de dinero guardada.", "ok");
+    await loadBonus();
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+async function loadUsers() {
+  if (!isBoss()) return;
+  const data = await fetchJson("/api/panel/users");
+  if (!data) return;
+
+  lastUsers = data.users;
+  const box = document.getElementById("usersTable");
+  if (!data.users.length) {
+    box.innerHTML = `<div class="muted-box">No hay usuarios.</div>`;
+    return;
+  }
+
+  box.innerHTML = data.users.map(user => `
+    <div class="user-row">
+      <div>
+        <strong>${escapeHtml(user.displayName)}</strong>
+        <span>${escapeHtml(user.discordUserId || "sin Discord ID")} · ${escapeHtml(user.username)}</span>
+      </div>
+      <div><span class="pill">${escapeHtml(ROLE_NAMES[user.role] || user.role)}</span></div>
+      <div>${user.active ? "Activo" : "Desactivado"}</div>
+      <div class="row-actions">
+        <button class="btn-secondary small" data-edit-user="${user.id}">Editar</button>
+        <button class="btn-secondary small" data-reset-password="${user.id}">Contraseña</button>
+      </div>
+    </div>
+  `).join("");
 
   box.querySelectorAll("[data-edit-user]").forEach(button => {
     button.addEventListener("click", () => {
-      const user = JSON.parse(button.dataset.editUser);
-
+      const user = lastUsers.find(item => Number(item.id) === Number(button.dataset.editUser));
+      if (!user) return;
       document.getElementById("userId").value = user.id;
       document.getElementById("userUsername").value = user.username;
       document.getElementById("userDisplayName").value = user.displayName;
@@ -506,13 +509,11 @@ async function loadUsers() {
     button.addEventListener("click", async () => {
       const password = prompt("Nueva contraseña para este usuario:");
       if (!password) return;
-
       try {
         await fetchJson(`/api/panel/users/${button.dataset.resetPassword}/password`, {
           method: "POST",
           body: JSON.stringify({ password })
         });
-
         setStatus("Contraseña cambiada.", "ok");
       } catch (error) {
         setStatus(error.message, "error");
@@ -533,7 +534,6 @@ function clearUserForm() {
 
 async function saveUser(event) {
   event.preventDefault();
-
   const id = document.getElementById("userId").value;
   const password = document.getElementById("userPassword").value;
   const payload = {
@@ -543,24 +543,19 @@ async function saveUser(event) {
     role: document.getElementById("userRole").value,
     active: document.getElementById("userActive").checked
   };
-
-  if (!id || password.trim()) {
-    payload.password = password;
-  }
+  if (!id || password.trim()) payload.password = password;
 
   try {
     await fetchJson(id ? `/api/panel/users/${id}` : "/api/panel/users", {
       method: id ? "PATCH" : "POST",
       body: JSON.stringify(payload)
     });
-
     if (id && password.trim()) {
       await fetchJson(`/api/panel/users/${id}/password`, {
         method: "POST",
         body: JSON.stringify({ password })
       });
     }
-
     setStatus(id ? "Usuario actualizado." : "Usuario creado.", "ok");
     clearUserForm();
     await loadUsers();
@@ -575,11 +570,7 @@ function bindEvents() {
   });
 
   document.getElementById("logoutBtn").addEventListener("click", async () => {
-    await fetchJson("/api/panel/logout", {
-      method: "POST",
-      body: JSON.stringify({})
-    });
-
+    await fetchJson("/api/panel/logout", { method: "POST", body: JSON.stringify({}) });
     window.location.href = "/panel/login";
   });
 
@@ -591,7 +582,8 @@ function bindEvents() {
     await loadSalidasList();
     calendar?.refetchEvents();
   });
-
+  document.getElementById("refreshBonusBtn").addEventListener("click", loadBonus);
+  document.getElementById("bonusConfigForm").addEventListener("submit", saveBonusConfig);
   document.getElementById("userForm").addEventListener("submit", saveUser);
   document.getElementById("clearUserFormBtn").addEventListener("click", clearUserForm);
   document.getElementById("refreshUsersBtn").addEventListener("click", loadUsers);
@@ -599,15 +591,12 @@ function bindEvents() {
 
 (async function init() {
   bindEvents();
-
   try {
     await loadMe();
     initCalendar();
     await loadSalidasList();
-
-    if (isBoss()) {
-      await loadUsers();
-    }
+    await loadBonus();
+    if (isBoss()) await loadUsers();
   } catch (error) {
     setStatus(error.message, "error");
   }
