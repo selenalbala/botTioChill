@@ -150,11 +150,16 @@ function calculateExtraTiradas(dailyCounts, dates, weekTotal) {
   const extraByDaily = days.reduce((acc, day) => acc + day.extra, 0);
   const extraByWeekly = Math.max(Number(weekTotal || 0) - WEEKLY_REQUIRED_TIRADAS, 0);
 
+  /*
+    Regla corregida:
+    - Se muestran las tiradas extra diarias para control interno.
+    - Pero el dinero limpio solo se paga cuando la semana supera las 14 tiradas.
+  */
   return {
     days,
     extraByDaily,
     extraByWeekly,
-    extraTiradas: Math.max(extraByDaily, extraByWeekly)
+    extraTiradas: extraByWeekly
   };
 }
 
