@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mi Meta · Tío Chill MC</title>
+  <title>Mi Meta · 𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏%</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
     <div class="brand">
       <div class="brand-icon">🏍️</div>
       <div>
-        <p class="mini-title">TÍO CHILL MC · MIEMBROS</p>
+        <p class="mini-title">𝓣𝓱𝓮 𝓛𝓸𝓼𝓽 𝓜𝓒 𝟏% · MIEMBROS</p>
         <h1>Mi meta</h1>
         <span id="memberName">Cargando...</span>
       </div>
@@ -40,8 +40,18 @@
       </article>
 
       <article class="stat-card">
-        <span>Meta pendiente</span>
-        <strong id="pendingMeta">0</strong>
+        <span>Meta semanal generada</span>
+        <strong id="weeklyMeta">0</strong>
+      </article>
+
+      <article class="stat-card">
+        <span>Tiradas de más</span>
+        <strong id="extraTiradas">0</strong>
+      </article>
+
+      <article class="stat-card">
+        <span>Dinero limpio a recibir</span>
+        <strong id="cleanTotal">0 €</strong>
       </article>
     </section>
 
@@ -51,7 +61,6 @@
           <p class="mini-title">ESTADO</p>
           <h2>Resumen personal</h2>
         </div>
-
         <span id="statusBadge" class="badge">Cargando</span>
       </div>
 
@@ -62,7 +71,7 @@
         </div>
 
         <div>
-          <span>Meta generada pendiente</span>
+          <span>Meta acumulada sin procesar</span>
           <strong id="pendingMetaBox">0</strong>
         </div>
 
@@ -72,10 +81,27 @@
         </div>
       </div>
 
+      <div class="meta-stats">
+        <div>
+          <span>Bruto por tirada extra</span>
+          <strong id="grossPerTirada">40.000 €</strong>
+        </div>
+
+        <div>
+          <span>Porcentaje descontado</span>
+          <strong id="cleanDiscountPercent">25%</strong>
+        </div>
+
+        <div>
+          <span>Limpio por tirada extra</span>
+          <strong id="cleanPerTirada">30.000 €</strong>
+        </div>
+      </div>
+
+      <p class="help" id="moneyHelp"></p>
       <p class="help" id="lastUser"></p>
 
       <button id="refreshBtn" type="button">Actualizar</button>
-
       <p class="status-message" id="statusMessage"></p>
     </section>
   </main>
