@@ -157,6 +157,55 @@ function setCurrentMeta(metaActual, actor = {}) {
   };
 }
 
+
+function buildProcessedMetaAdjustmentData(deltaMeta, actor = {}) {
+  const now = new Date();
+  return {
+    channelId: TARGET_CHANNEL_ID,
+    cantidadTiradas: 0,
+    metaTotal: Number(deltaMeta),
+    timestampUtc: now.toISOString(),
+    fechaLocal: getLocalDateText(now, TIMEZONE),
+    guildId: actor.guildId || process.env.GUILD_ID || "panel-web",
+    processorUserId: actor.userId || "panel-web-meta-final-ajuste",
+    processorUsername: actor.username || "panel-web",
+    processorDisplayName: actor.displayName || "Ajuste manual de meta final"
+  };
+}
+
+function setProcessedMeta(metaProcesadaPendienteObjetivo, actor = {}) {
+  const target = Number(metaProcesadaPendienteObjetivo);
+  if (!Number.isInteger(target) || target < 0 || target > 1000000) {
+    throw new Error("La meta procesada pendiente debe ser un número entero entre 0 y 1.000.000.");
+  }
+
+  const before = db.getPendingProcessedMeta(TARGET_CHANNEL_ID);
+  const delta = target - before;
+
+  if (delta > 0) {
+    db.processPendingTiradas(buildProcessedMetaAdjustmentData(delta, actor));
+  } else if (delta < 0) {
+    const now = new Date();
+    db.packagePendingMeta({
+      channelId: TARGET_CHANNEL_ID,
+      metaAempaquetar: Math.abs(delta),
+      timestampUtc: now.toISOString(),
+      fechaLocal: getLocalDateText(now, TIMEZONE),
+      guildId: actor.guildId || process.env.GUILD_ID || "panel-web",
+      packerUserId: actor.userId || "panel-web-meta-final-ajuste",
+      packerUsername: actor.username || "panel-web",
+      packerDisplayName: actor.displayName || "Ajuste manual de meta final"
+    });
+  }
+
+  const after = db.getPendingProcessedMeta(TARGET_CHANNEL_ID);
+  return {
+    beforeMetaProcesada: before,
+    afterMetaProcesada: after,
+    deltaMetaProcesada: delta
+  };
+}
+
 function buildProcessStatusText(channelId = TARGET_CHANNEL_ID) {
   const state = getMetaState(channelId);
   return [
@@ -203,6 +252,7 @@ module.exports = {
   getIsoWeekFromParts,
   getMetaState,
   setCurrentMeta,
+  setProcessedMeta,
   buildProcessStatusText,
   buildPackagingStatusText,
   buildUserPendingText

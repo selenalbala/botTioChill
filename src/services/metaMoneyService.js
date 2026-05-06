@@ -30,6 +30,31 @@ function initMoneyTables() {
       clean_discount_percent REAL NOT NULL DEFAULT 25,
       updated_at_utc TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS meta_clean_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at_utc TEXT NOT NULL,
+      fecha_local TEXT NOT NULL,
+      guild_id TEXT,
+      channel_id TEXT,
+      user_id TEXT NOT NULL,
+      username TEXT,
+      display_name TEXT,
+      amount INTEGER NOT NULL,
+      actor_user_id TEXT,
+      actor_username TEXT,
+      actor_display_name TEXT,
+      note TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_meta_clean_payments_user ON meta_clean_payments(user_id);
+    CREATE INDEX IF NOT EXISTS idx_meta_clean_payments_created ON meta_clean_payments(created_at_utc);
+
+    CREATE TABLE IF NOT EXISTS meta_clean_payment_panel_message (
+      channel_id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      updated_at_utc TEXT NOT NULL
+    );
   `);
 
   const existing = sqlite.prepare(`SELECT id FROM meta_money_config WHERE id = 1`).get();
@@ -108,6 +133,49 @@ function getDailyCountsMap({ channelId = TARGET_CHANNEL_ID, desde, hasta }) {
   return map;
 }
 
+function getAllTimeWeeklyExtrasMap({ channelId = TARGET_CHANNEL_ID } = {}) {
+  const rows = sqlite.prepare(`
+    SELECT user_id, anio, semana_iso, COALESCE(SUM(CASE WHEN conteo > 0 THEN conteo ELSE 0 END), 0) AS total
+    FROM tiradas
+    WHERE channel_id = ?
+      AND user_id NOT LIKE 'panel-web-%'
+    GROUP BY user_id, anio, semana_iso
+  `).all(channelId);
+
+  const map = new Map();
+  for (const row of rows) {
+    const extra = Math.max(Number(row.total || 0) - WEEKLY_REQUIRED_TIRADAS, 0);
+    if (!map.has(row.user_id)) map.set(row.user_id, 0);
+    map.set(row.user_id, map.get(row.user_id) + extra);
+  }
+  return map;
+}
+
+function getPaidTotalsMap() {
+  initMoneyTables();
+  const rows = sqlite.prepare(`
+    SELECT user_id, COALESCE(SUM(amount), 0) AS total
+    FROM meta_clean_payments
+    GROUP BY user_id
+  `).all();
+
+  const map = new Map();
+  for (const row of rows) {
+    map.set(String(row.user_id), Number(row.total || 0));
+  }
+  return map;
+}
+
+function getPaidTotalForUser(userId) {
+  initMoneyTables();
+  const row = sqlite.prepare(`
+    SELECT COALESCE(SUM(amount), 0) AS total
+    FROM meta_clean_payments
+    WHERE user_id = ?
+  `).get(String(userId));
+  return Number(row?.total || 0);
+}
+
 function addDaysToYmd(ymd, days) {
   const [year, month, day] = ymd.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -175,10 +243,36 @@ function calculateExtras(dailyCounts, dates) {
     weekTotal,
     extraByDaily,
     extraByWeekly,
-    extraTiradas: Math.max(extraByDaily, extraByWeekly),
+
+    // Regla de pago corregida: solo se paga lo que supere 14 semanal.
+    // El extra diario se muestra para control, pero no genera dinero si la semana no supera 14.
+    extraTiradas: extraByWeekly,
     dailyOk: totalsByDay.every(item => item.total >= DAILY_REQUIRED_TIRADAS),
     weeklyOk: weekTotal >= WEEKLY_REQUIRED_TIRADAS
   };
+}
+
+function addMissingMembersFromTiradas(members, channelId = TARGET_CHANNEL_ID) {
+  const existingIds = new Set(members.map(member => String(member.userId)));
+  const rows = sqlite.prepare(`
+    SELECT user_id, MAX(username) AS username, MAX(display_name) AS display_name
+    FROM tiradas
+    WHERE channel_id = ?
+      AND user_id NOT LIKE 'panel-web-%'
+    GROUP BY user_id
+  `).all(channelId);
+
+  for (const row of rows) {
+    if (existingIds.has(String(row.user_id))) continue;
+    members.push({
+      userId: String(row.user_id),
+      username: row.username || String(row.user_id),
+      displayName: row.display_name || row.username || String(row.user_id),
+      roleIds: []
+    });
+  }
+
+  return members.sort((a, b) => String(a.displayName).localeCompare(String(b.displayName), "es"));
 }
 
 async function buildBonusSummary({ guild, channelId = TARGET_CHANNEL_ID, desde, hasta, onlyDiscordUserId } = {}) {
@@ -188,13 +282,15 @@ async function buildBonusSummary({ guild, channelId = TARGET_CHANNEL_ID, desde, 
   const fechas = datesBetween(range.start, range.end);
   const moneyConfig = getMoneyConfig();
   const countsMap = getDailyCountsMap({ channelId, desde: range.start, hasta: range.end });
+  const allTimeExtrasMap = getAllTimeWeeklyExtrasMap({ channelId });
+  const paidTotalsMap = getPaidTotalsMap();
 
   let members = await getGroupMembers(guild);
+  members = addMissingMembersFromTiradas(members, channelId);
 
   if (onlyDiscordUserId) {
     members = members.filter(member => String(member.userId) === String(onlyDiscordUserId));
 
-    // Si el usuario no está en caché pero tiene tiradas, lo mostramos igualmente.
     if (!members.length) {
       const summary = dbModule.getUserSummary(String(onlyDiscordUserId));
       if (summary) {
@@ -211,8 +307,14 @@ async function buildBonusSummary({ guild, channelId = TARGET_CHANNEL_ID, desde, 
   const rows = members.map(member => {
     const dailyCounts = countsMap.get(member.userId) || new Map();
     const calculated = calculateExtras(dailyCounts, fechas);
-    const cleanTotal = calculated.extraTiradas * moneyConfig.cleanPerTirada;
-    const grossTotal = calculated.extraTiradas * moneyConfig.grossPerTirada;
+    const currentWeekCleanTotal = calculated.extraTiradas * moneyConfig.cleanPerTirada;
+    const currentWeekGrossTotal = calculated.extraTiradas * moneyConfig.grossPerTirada;
+
+    const allTimeExtraTiradas = Number(allTimeExtrasMap.get(member.userId) || 0);
+    const generatedCleanTotal = allTimeExtraTiradas * moneyConfig.cleanPerTirada;
+    const generatedGrossTotal = allTimeExtraTiradas * moneyConfig.grossPerTirada;
+    const paidCleanTotal = Number(paidTotalsMap.get(String(member.userId)) || 0);
+    const pendingCleanTotal = Math.max(generatedCleanTotal - paidCleanTotal, 0);
 
     return {
       userId: member.userId,
@@ -227,18 +329,25 @@ async function buildBonusSummary({ guild, channelId = TARGET_CHANNEL_ID, desde, 
       extraByDaily: calculated.extraByDaily,
       extraByWeekly: calculated.extraByWeekly,
       extraTiradas: calculated.extraTiradas,
+      allTimeExtraTiradas,
       grossPerTirada: moneyConfig.grossPerTirada,
       cleanDiscountPercent: moneyConfig.cleanDiscountPercent,
       cleanPerTirada: moneyConfig.cleanPerTirada,
-      grossTotal,
-      cleanTotal,
+      grossTotal: generatedGrossTotal,
+      cleanTotal: pendingCleanTotal,
+      currentWeekCleanTotal,
+      currentWeekGrossTotal,
+      generatedCleanTotal,
+      generatedGrossTotal,
+      paidCleanTotal,
+      pendingCleanTotal,
       days: calculated.totalsByDay
     };
   });
 
   rows.sort((a, b) => {
-    if (b.cleanTotal !== a.cleanTotal) return b.cleanTotal - a.cleanTotal;
-    if (b.extraTiradas !== a.extraTiradas) return b.extraTiradas - a.extraTiradas;
+    if (b.pendingCleanTotal !== a.pendingCleanTotal) return b.pendingCleanTotal - a.pendingCleanTotal;
+    if (b.generatedCleanTotal !== a.generatedCleanTotal) return b.generatedCleanTotal - a.generatedCleanTotal;
     return String(a.displayName).localeCompare(String(b.displayName), "es");
   });
 
@@ -253,8 +362,13 @@ async function buildBonusSummary({ guild, channelId = TARGET_CHANNEL_ID, desde, 
     totals: {
       members: rows.length,
       extraTiradas: rows.reduce((acc, row) => acc + row.extraTiradas, 0),
-      cleanTotal: rows.reduce((acc, row) => acc + row.cleanTotal, 0),
-      grossTotal: rows.reduce((acc, row) => acc + row.grossTotal, 0)
+      allTimeExtraTiradas: rows.reduce((acc, row) => acc + row.allTimeExtraTiradas, 0),
+      currentWeekCleanTotal: rows.reduce((acc, row) => acc + row.currentWeekCleanTotal, 0),
+      generatedCleanTotal: rows.reduce((acc, row) => acc + row.generatedCleanTotal, 0),
+      paidCleanTotal: rows.reduce((acc, row) => acc + row.paidCleanTotal, 0),
+      pendingCleanTotal: rows.reduce((acc, row) => acc + row.pendingCleanTotal, 0),
+      cleanTotal: rows.reduce((acc, row) => acc + row.pendingCleanTotal, 0),
+      grossTotal: rows.reduce((acc, row) => acc + row.generatedGrossTotal, 0)
     }
   };
 }
@@ -315,10 +429,89 @@ async function setUserWeekTotal({ guild, channelId = TARGET_CHANNEL_ID, userId, 
   return { before, after: newTotal, delta, range };
 }
 
+function recordCleanPayment({ guildId, channelId, userId, username, displayName, amount, actorUserId, actorUsername, actorDisplayName, note }) {
+  initMoneyTables();
+
+  const cleanAmount = Number(amount);
+  if (!Number.isInteger(cleanAmount) || cleanAmount <= 0 || cleanAmount > 1000000000) {
+    throw new Error("La cantidad pagada debe ser un número entero mayor que 0.");
+  }
+
+  const now = new Date();
+  const result = sqlite.prepare(`
+    INSERT INTO meta_clean_payments (
+      created_at_utc, fecha_local, guild_id, channel_id,
+      user_id, username, display_name, amount,
+      actor_user_id, actor_username, actor_display_name, note
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    now.toISOString(),
+    getLocalDateText(now, TIMEZONE),
+    guildId || process.env.GUILD_ID || null,
+    channelId || null,
+    String(userId),
+    username || String(userId),
+    displayName || username || String(userId),
+    cleanAmount,
+    actorUserId || null,
+    actorUsername || null,
+    actorDisplayName || actorUsername || null,
+    note || null
+  );
+
+  return getCleanPaymentById(result.lastInsertRowid);
+}
+
+function getCleanPaymentById(id) {
+  initMoneyTables();
+  return sqlite.prepare(`SELECT * FROM meta_clean_payments WHERE id = ?`).get(id);
+}
+
+function getCleanPayments({ userId, limit = 50 } = {}) {
+  initMoneyTables();
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 200);
+  if (userId) {
+    return sqlite.prepare(`
+      SELECT * FROM meta_clean_payments
+      WHERE user_id = ?
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(String(userId), safeLimit);
+  }
+
+  return sqlite.prepare(`
+    SELECT * FROM meta_clean_payments
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(safeLimit);
+}
+
+function getPaymentPanelMessage(channelId) {
+  initMoneyTables();
+  return sqlite.prepare(`
+    SELECT * FROM meta_clean_payment_panel_message
+    WHERE channel_id = ?
+  `).get(String(channelId));
+}
+
+function savePaymentPanelMessage(channelId, messageId) {
+  initMoneyTables();
+  return sqlite.prepare(`
+    INSERT OR REPLACE INTO meta_clean_payment_panel_message (channel_id, message_id, updated_at_utc)
+    VALUES (?, ?, ?)
+  `).run(String(channelId), String(messageId), nowIso());
+}
+
 module.exports = {
   initMoneyTables,
   getMoneyConfig,
   setMoneyConfig,
   buildBonusSummary,
-  setUserWeekTotal
+  setUserWeekTotal,
+  recordCleanPayment,
+  getCleanPaymentById,
+  getCleanPayments,
+  getPaidTotalForUser,
+  getPaymentPanelMessage,
+  savePaymentPanelMessage
 };

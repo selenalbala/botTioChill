@@ -9,7 +9,7 @@ const {
   WEEKLY_REQUIRED_TIRADAS
 } = require("../config");
 const { getLocalYmd, getCurrentWeekRange } = require("./complianceService");
-const { getMoneyConfig } = require("./metaMoneyService");
+const { getMoneyConfig, getPaidTotalForUser } = require("./metaMoneyService");
 
 function normalizeUsername(value) {
   return String(value || "").trim().toLowerCase();
@@ -150,17 +150,26 @@ function calculateExtraTiradas(dailyCounts, dates, weekTotal) {
   const extraByDaily = days.reduce((acc, day) => acc + day.extra, 0);
   const extraByWeekly = Math.max(Number(weekTotal || 0) - WEEKLY_REQUIRED_TIRADAS, 0);
 
-  /*
-    Regla corregida:
-    - Se muestran las tiradas extra diarias para control interno.
-    - Pero el dinero limpio solo se paga cuando la semana supera las 14 tiradas.
-  */
   return {
     days,
     extraByDaily,
     extraByWeekly,
+    // Regla corregida: el dinero solo se genera al superar 14 semanales.
     extraTiradas: extraByWeekly
   };
+}
+
+
+function getAllTimeExtraTiradasForUser(userId) {
+  const rows = db.db.prepare(`
+    SELECT anio, semana_iso, COALESCE(SUM(CASE WHEN conteo > 0 THEN conteo ELSE 0 END), 0) AS total
+    FROM tiradas
+    WHERE channel_id = ?
+      AND user_id = ?
+    GROUP BY anio, semana_iso
+  `).all(TARGET_CHANNEL_ID, String(userId));
+
+  return rows.reduce((acc, row) => acc + Math.max(Number(row.total || 0) - WEEKLY_REQUIRED_TIRADAS, 0), 0);
 }
 
 function getMemberPrivateStats(userId) {
@@ -181,7 +190,11 @@ function getMemberPrivateStats(userId) {
   const extra = calculateExtraTiradas(dailyCounts, weekDates, weekCount);
 
   const grossTotal = extra.extraTiradas * moneyConfig.grossPerTirada;
-  const cleanTotal = extra.extraTiradas * moneyConfig.cleanPerTirada;
+  const currentWeekCleanTotal = extra.extraTiradas * moneyConfig.cleanPerTirada;
+  const allTimeExtraTiradas = getAllTimeExtraTiradasForUser(userId);
+  const generatedCleanTotal = allTimeExtraTiradas * moneyConfig.cleanPerTirada;
+  const paidCleanTotal = getPaidTotalForUser(userId);
+  const cleanTotal = Math.max(generatedCleanTotal - paidCleanTotal, 0);
 
   return {
     discordUserId: userId,
@@ -210,6 +223,11 @@ function getMemberPrivateStats(userId) {
     cleanDiscountPercent: moneyConfig.cleanDiscountPercent,
     cleanPerTirada: moneyConfig.cleanPerTirada,
     grossTotal,
+    currentWeekCleanTotal,
+    allTimeExtraTiradas,
+    generatedCleanTotal,
+    paidCleanTotal,
+    pendingCleanTotal: cleanTotal,
     cleanTotal,
     days: extra.days,
 
