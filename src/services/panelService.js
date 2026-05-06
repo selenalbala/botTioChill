@@ -1,18 +1,12 @@
 const {
   TARGET_CHANNEL_ID,
-  META_POR_TIRADA,
-  META_MAXIMA_PROCESO,
-  TIRADAS_PARA_PROCESAR,
-  META_PARA_EMPAQUETAR,
   TIRADA_COOLDOWN_MS
 } = require("../config");
-
 const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle
 } = require("discord.js");
-
 const db = require("../db");
 const { getMetaState } = require("./metaService");
 
@@ -41,25 +35,15 @@ function buildPanelRows() {
 
 function buildNextTiradaText(channelId = TARGET_CHANNEL_ID) {
   const last = db.getLastButtonTiradaGlobal(channelId);
-
-  if (!last) {
-    return "⏱️ **Siguiente tirada:** disponible ahora.";
-  }
+  if (!last) return "⏱️ **Siguiente tirada:** disponible ahora.";
 
   const lastMs = new Date(last.timestamp_utc).getTime();
-
-  if (Number.isNaN(lastMs)) {
-    return "⏱️ **Siguiente tirada:** disponible ahora.";
-  }
+  if (Number.isNaN(lastMs)) return "⏱️ **Siguiente tirada:** disponible ahora.";
 
   const nextMs = lastMs + TIRADA_COOLDOWN_MS;
-
-  if (Date.now() >= nextMs) {
-    return "⏱️ **Siguiente tirada:** disponible ahora.";
-  }
+  if (Date.now() >= nextMs) return "⏱️ **Siguiente tirada:** disponible ahora.";
 
   const unix = Math.floor(nextMs / 1000);
-
   return [
     `⏱️ **Siguiente tirada:** <t:${unix}:R>`,
     `🕒 **Hora exacta:** <t:${unix}:t>`
@@ -69,8 +53,20 @@ function buildNextTiradaText(channelId = TARGET_CHANNEL_ID) {
 function buildMetaPanelContent(channelId = TARGET_CHANNEL_ID) {
   const state = getMetaState(channelId);
 
+  const procesoEstado = state.tiradasPendientes <= 0
+    ? "⏳ **Estado:** no hay tiradas pendientes para procesar."
+    : state.recomendadoProcesar
+      ? "✅ **Estado:** recomendado procesar. No hace falta esperar a 500."
+      : "⚠️ **Estado:** se puede procesar si hace falta. La guía es 448, pero no bloquea.";
+
+  const empaquetadoEstado = state.metaProcesadaPendienteReal <= 0
+    ? "⏳ **Empaquetado:** no hay meta procesada pendiente."
+    : state.recomendadoEmpaquetar
+      ? "✅ **Empaquetado:** recomendado empaquetar. No hace falta esperar a 500."
+      : "⚠️ **Empaquetado:** se puede empaquetar si hace falta. La guía es 448, pero no bloquea.";
+
   return [
-    "🏍️ **Panel de meta de la banda**",
+    "🧪 **Panel de meta de la banda**",
     "",
     "Pulsa **+1 tirada** para registrar una tirada de meta.",
     "",
@@ -78,34 +74,31 @@ function buildMetaPanelContent(channelId = TARGET_CHANNEL_ID) {
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
-    `🧪 **Meta actual:** ${state.metaActual}/${state.metaCapacidadMaxima}`,
-    `🎲 **Guía para procesar:** ${state.metaGuiaProceso}`,
+    `📦 **Meta actual:** ${state.metaActual}/${state.metaCapacidadMaxima}`,
+    `📍 **Guía para procesar:** ${state.metaGuiaProceso}`,
     `➕ **Tiradas acumuladas:** ${state.tiradasPendientes}/${state.tiradasParaProcesar}`,
+    state.tiradasPendientesReales > state.tiradasPendientes
+      ? `⚠️ Hay **${state.tiradasPendientesReales}** tirada(s) reales pendientes; se procesarán por tandas de ${state.tiradasParaProcesar}.`
+      : null,
     "",
-state.listoParaProcesar
-  ? "✅ **Estado:** listo para procesar. No hace falta esperar a 500."
-  : `⏳ **Estado:** faltan ${state.metaRestante} para llegar a la guía de ${state.metaGuiaProceso}.`,
+    procesoEstado,
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
-    `📦 **Meta procesada pendiente:** ${state.metaProcesadaPendiente}/${state.metaCapacidadMaxima}`,
-    ` **Guía para empaquetar:** ${state.metaGuiaEmpaquetar}`,
-state.listoParaEmpaquetar
-  ? "✅ **Empaquetado:** listo para empaquetar. No hace falta esperar a 500."
-  : `⏳ **Empaquetado:** faltan ${state.metaProcesadaRestante} para llegar a la guía de ${state.metaGuiaEmpaquetar}.`
-  ].join("\n");
+    `🎁 **Meta procesada pendiente:** ${state.metaProcesadaPendiente}/${state.metaCapacidadMaxima}`,
+    `📍 **Guía para empaquetar:** ${state.metaGuiaEmpaquetar}`,
+    empaquetadoEstado
+  ].filter(Boolean).join("\n");
 }
 
 async function findExistingPanelMessage(channel, clientUserId) {
   const saved = db.getMetaStatusMessage(channel.id);
-
   if (saved?.message_id) {
     const message = await channel.messages.fetch(saved.message_id).catch(() => null);
     if (message) return message;
   }
 
   const messages = await channel.messages.fetch({ limit: 25 }).catch(() => null);
-
   if (!messages) return null;
 
   const existing = messages.find(message => {
@@ -117,16 +110,10 @@ async function findExistingPanelMessage(channel, clientUserId) {
 }
 
 async function refreshMetaPanel(client, channelId = TARGET_CHANNEL_ID) {
-  if (!client) {
-    throw new Error("No hay cliente de Discord disponible.");
-  }
-
-  if (!channelId) {
-    throw new Error("TARGET_CHANNEL_ID no está configurado.");
-  }
+  if (!client) throw new Error("No hay cliente de Discord disponible.");
+  if (!channelId) throw new Error("TARGET_CHANNEL_ID no está configurado.");
 
   const channel = await client.channels.fetch(channelId).catch(() => null);
-
   if (!channel || typeof channel.send !== "function") {
     throw new Error("No se pudo encontrar el canal del panel de meta.");
   }
@@ -137,7 +124,6 @@ async function refreshMetaPanel(client, channelId = TARGET_CHANNEL_ID) {
   };
 
   const existing = await findExistingPanelMessage(channel, client.user?.id);
-
   if (existing) {
     const edited = await existing.edit(payload);
     db.saveMetaStatusMessage(channelId, edited.id);
@@ -146,7 +132,6 @@ async function refreshMetaPanel(client, channelId = TARGET_CHANNEL_ID) {
 
   const sent = await channel.send(payload);
   db.saveMetaStatusMessage(channelId, sent.id);
-
   return sent;
 }
 

@@ -3,36 +3,37 @@ const {
   TIMEZONE,
   ALLOWED_TIRADA_ROLE_IDS,
   ALLOWED_TIRADA_ROLE_ID_SET,
+  MEMBER_ROLE_IDS,
+  MEMBER_ROLE_ID_SET,
+  STAFF_ROLE_IDS,
+  STAFF_ROLE_ID_SET,
   DELETE_REVIEW_ROLE_ID,
   DAILY_REQUIRED_TIRADAS,
   WEEKLY_REQUIRED_TIRADAS
 } = require("../config");
-
 const db = require("../db");
 
 function getMemberRoleIds(member) {
   if (!member?.roles) return [];
-
-  if (member.roles.cache) {
-    return [...member.roles.cache.keys()];
-  }
-
-  if (Array.isArray(member.roles)) {
-    return member.roles;
-  }
-
+  if (member.roles.cache) return [...member.roles.cache.keys()];
+  if (Array.isArray(member.roles)) return member.roles;
   return [];
 }
 
 function memberHasAllowedRole(member) {
-  return getMemberRoleIds(member).some(roleId =>
-    ALLOWED_TIRADA_ROLE_ID_SET.has(String(roleId))
-  );
+  return getMemberRoleIds(member).some(roleId => ALLOWED_TIRADA_ROLE_ID_SET.has(String(roleId)));
+}
+
+function memberHasGroupMemberRole(member) {
+  return getMemberRoleIds(member).some(roleId => MEMBER_ROLE_ID_SET.has(String(roleId)));
+}
+
+function memberHasConfiguredStaffRole(member) {
+  return getMemberRoleIds(member).some(roleId => STAFF_ROLE_ID_SET.has(String(roleId)));
 }
 
 function memberHasDeleteReviewRole(member) {
-  if (!DELETE_REVIEW_ROLE_ID) return false;
-  return getMemberRoleIds(member).includes(String(DELETE_REVIEW_ROLE_ID));
+  return getMemberRoleIds(member).includes(DELETE_REVIEW_ROLE_ID);
 }
 
 function getLocalYmd(date = new Date(), timeZone = TIMEZONE) {
@@ -42,29 +43,23 @@ function getLocalYmd(date = new Date(), timeZone = TIMEZONE) {
     month: "2-digit",
     day: "2-digit"
   });
-
   return formatter.format(date);
 }
 
 function addDaysToYmd(ymd, days) {
   const [year, month, day] = ymd.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
-
   date.setUTCDate(date.getUTCDate() + days);
-
   return date.toISOString().slice(0, 10);
 }
 
 function getCurrentWeekRange(timeZone = TIMEZONE) {
   const today = getLocalYmd(new Date(), timeZone);
   const [year, month, day] = today.split("-").map(Number);
-
   const d = new Date(Date.UTC(year, month - 1, day));
   const dayNumber = d.getUTCDay() || 7;
-
   const monday = new Date(d);
   monday.setUTCDate(d.getUTCDate() - dayNumber + 1);
-
   const sunday = new Date(monday);
   sunday.setUTCDate(monday.getUTCDate() + 6);
 
@@ -76,216 +71,82 @@ function getCurrentWeekRange(timeZone = TIMEZONE) {
 
 function rowsToMap(rows) {
   const map = new Map();
-
-  for (const row of rows) {
-    map.set(row.user_id, Number(row.total || 0));
-  }
-
+  for (const row of rows) map.set(row.user_id, Number(row.total || 0));
   return map;
 }
 
 function compareSnowflakes(a, b) {
   const aa = BigInt(a);
   const bb = BigInt(b);
-
   if (aa < bb) return -1;
   if (aa > bb) return 1;
   return 0;
 }
 
-/**
- * Fallback por Gateway.
- * Esta llamada puede dar rate limit si se abusa de ella.
- * Por eso solo se usa como último recurso.
- */
 async function fetchMembersWithGateway(guild) {
-  const collection = await guild.members.fetch({
-    withPresences: false,
-    time: 30000
-  });
-
+  const collection = await guild.members.fetch({ withPresences: false, time: 30000 });
   return [...collection.values()];
 }
 
-/**
- * Carga miembros por REST paginando.
- * Es preferible a guild.members.fetch() masivo.
- */
 async function fetchMembersWithRestList(guild) {
-  if (typeof guild.members.list !== "function") {
-    return [];
-  }
+  if (typeof guild.members.list !== "function") return [];
 
   const all = new Map();
   let after = "0";
 
   for (let i = 0; i < 30; i++) {
-    const page = await guild.members.list({
-      limit: 1000,
-      after
-    });
-
+    const page = await guild.members.list({ limit: 1000, after });
     if (!page || page.size === 0) break;
 
-    for (const [id, member] of page) {
-      all.set(id, member);
-    }
+    for (const [id, member] of page) all.set(id, member);
 
     const ids = [...page.keys()].sort(compareSnowflakes);
     after = ids[ids.length - 1];
-
     if (page.size < 1000) break;
   }
 
   return [...all.values()];
 }
 
-/**
- * Caché para no pedir todos los miembros a Discord cada vez que se abre la web.
- */
-let membersCache = {
-  guildId: null,
-  members: [],
-  method: "empty",
-  errors: [],
-  expiresAt: 0
-};
-
-let pendingMembersFetch = null;
-
-const MEMBERS_CACHE_MS = Number(process.env.MEMBERS_CACHE_MS || 5 * 60 * 1000);
-
-async function fetchAllGuildMembers(guild, options = {}) {
-  const force = options.force === true;
-  const now = Date.now();
-
-  if (
-    !force &&
-    membersCache.guildId === guild.id &&
-    membersCache.members.length > 0 &&
-    membersCache.expiresAt > now
-  ) {
-    return {
-      members: membersCache.members,
-      method: `${membersCache.method}_cache`,
-      errors: membersCache.errors || []
-    };
-  }
-
-  if (!force && pendingMembersFetch) {
-    return pendingMembersFetch;
-  }
-
-  pendingMembersFetch = (async () => {
-    const errors = [];
-
-    /**
-     * 1. Primero intentamos REST list.
-     */
-    try {
-      const members = await fetchMembersWithRestList(guild);
-
-      if (members.length > 0) {
-        membersCache = {
-          guildId: guild.id,
-          members,
-          method: "rest_list",
-          errors,
-          expiresAt: Date.now() + MEMBERS_CACHE_MS
-        };
-
-        return {
-          members,
-          method: "rest_list",
-          errors
-        };
-      }
-    } catch (error) {
-      errors.push(`rest_list: ${error.message}`);
-      console.error("Error usando guild.members.list():", error);
-    }
-
-    /**
-     * 2. Si Discord ya tiene miembros en caché, usamos eso.
-     */
-    const cachedMembers = [...guild.members.cache.values()];
-
-    if (cachedMembers.length > 0) {
-      membersCache = {
-        guildId: guild.id,
-        members: cachedMembers,
-        method: "discord_cache",
-        errors,
-        expiresAt: Date.now() + MEMBERS_CACHE_MS
-      };
-
-      return {
-        members: cachedMembers,
-        method: "discord_cache",
-        errors
-      };
-    }
-
-    /**
-     * 3. Último recurso: Gateway fetch.
-     * Esta era la llamada que te daba rate limit.
-     */
-    try {
-      const members = await fetchMembersWithGateway(guild);
-
-      membersCache = {
-        guildId: guild.id,
-        members,
-        method: "gateway_fetch",
-        errors,
-        expiresAt: Date.now() + MEMBERS_CACHE_MS
-      };
-
-      return {
-        members,
-        method: "gateway_fetch",
-        errors
-      };
-    } catch (error) {
-      errors.push(`gateway_fetch: ${error.message}`);
-      console.error("Error usando guild.members.fetch():", error);
-    }
-
-    return {
-      members: [],
-      method: "empty_fallback",
-      errors
-    };
-  })();
+async function fetchAllGuildMembers(guild) {
+  const errors = [];
 
   try {
-    return await pendingMembersFetch;
-  } finally {
-    pendingMembersFetch = null;
+    const members = await fetchMembersWithGateway(guild);
+    if (members.length > 0) return { members, method: "gateway_fetch", errors };
+  } catch (error) {
+    errors.push(`gateway_fetch: ${error.message}`);
+    console.error("Error usando guild.members.fetch():", error);
   }
+
+  try {
+    const members = await fetchMembersWithRestList(guild);
+    if (members.length > 0) return { members, method: "rest_list", errors };
+  } catch (error) {
+    errors.push(`rest_list: ${error.message}`);
+    console.error("Error usando guild.members.list():", error);
+  }
+
+  const cachedMembers = [...guild.members.cache.values()];
+  return { members: cachedMembers, method: "cache_fallback", errors };
 }
 
 async function getComplianceForGuild(guild) {
-  if (!guild) {
-    throw new Error("No se ha recibido el servidor de Discord.");
-  }
+  if (!guild) throw new Error("No se ha recibido el servidor de Discord.");
 
   const loaded = await fetchAllGuildMembers(guild);
   const allMembers = loaded.members;
-
   const humanMembers = allMembers.filter(member => !member.user?.bot);
-  const members = humanMembers.filter(memberHasAllowedRole);
+
+  // El cumplimiento diario/semanal se calcula solo con los roles de miembros del grupo.
+  // Los roles autorizados de staff pueden gestionar, pero no cuentan como obligación del grupo.
+  const members = humanMembers.filter(memberHasGroupMemberRole);
 
   const today = getLocalYmd(new Date(), TIMEZONE);
   const week = getCurrentWeekRange(TIMEZONE);
 
-  const todayCounts = rowsToMap(
-    db.getCountsByUserForLocalDateRange(TARGET_CHANNEL_ID, today, today)
-  );
-
-  const weekCounts = rowsToMap(
-    db.getCountsByUserForLocalDateRange(TARGET_CHANNEL_ID, week.start, week.end)
-  );
+  const todayCounts = rowsToMap(db.getCountsByUserForLocalDateRange(TARGET_CHANNEL_ID, today, today));
+  const weekCounts = rowsToMap(db.getCountsByUserForLocalDateRange(TARGET_CHANNEL_ID, week.start, week.end));
 
   const users = members.map(member => {
     const todayCount = todayCounts.get(member.id) || 0;
@@ -309,10 +170,7 @@ async function getComplianceForGuild(guild) {
   users.sort((a, b) => {
     if (a.daily_ok !== b.daily_ok) return a.daily_ok ? 1 : -1;
     if (a.weekly_ok !== b.weekly_ok) return a.weekly_ok ? 1 : -1;
-
-    return String(a.display_name || a.username || "").localeCompare(
-      String(b.display_name || b.username || "")
-    );
+    return String(a.display_name || a.username || "").localeCompare(String(b.display_name || b.username || ""), "es");
   });
 
   return {
@@ -328,8 +186,10 @@ async function getComplianceForGuild(guild) {
       load_errors: loaded.errors,
       total_members_loaded: allMembers.length,
       total_human_members: humanMembers.length,
-      total_allowed_members: users.length,
-      allowed_role_ids: ALLOWED_TIRADA_ROLE_IDS
+      total_group_members: users.length,
+      member_role_ids: MEMBER_ROLE_IDS,
+      staff_role_ids: STAFF_ROLE_IDS,
+      allowed_tirada_role_ids: ALLOWED_TIRADA_ROLE_IDS
     }
   };
 }
@@ -337,6 +197,8 @@ async function getComplianceForGuild(guild) {
 module.exports = {
   getMemberRoleIds,
   memberHasAllowedRole,
+  memberHasGroupMemberRole,
+  memberHasConfiguredStaffRole,
   memberHasDeleteReviewRole,
   getLocalYmd,
   addDaysToYmd,
