@@ -17,11 +17,17 @@ module.exports = {
   // Canal donde está el panel de meta.
   TARGET_CHANNEL_ID: process.env.TARGET_CHANNEL_ID || "1492835062453112933",
 
-  // Canal donde el bot publica logs de acciones.
+  // Canal donde el bot publica logs de acciones generales.
   ACTION_LOG_CHANNEL_ID: process.env.ACTION_LOG_CHANNEL_ID || "1498007351993831485",
 
   // Canal donde se avisan las salidas creadas desde el calendario.
   SALIDAS_CHANNEL_ID: process.env.SALIDAS_CHANNEL_ID || "1492875427226587328",
+
+  // Canal donde estará el panel de pagos de dinero limpio.
+  CLEAN_PAYMENT_PANEL_CHANNEL_ID: process.env.CLEAN_PAYMENT_PANEL_CHANNEL_ID || "1501541196516954333",
+
+  // Canal donde se registran los pagos de dinero limpio.
+  CLEAN_PAYMENT_LOG_CHANNEL_ID: process.env.CLEAN_PAYMENT_LOG_CHANNEL_ID || "1501545616960913449",
 
   DELETE_REVIEW_ROLE_ID: process.env.DELETE_REVIEW_ROLE_ID || "1492832332892082196",
   TIMEZONE: process.env.TIMEZONE || "Europe/Madrid",
