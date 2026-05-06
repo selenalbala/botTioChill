@@ -79,7 +79,6 @@ async function buildPermissions(client, panelUser) {
   const discordRoleIds = member ? getMemberRoleIds(member).map(String) : [];
   const hasConfiguredStaffRole = discordRoleIds.some(roleId => STAFF_ROLE_ID_SET.has(roleId));
 
-  // No hace falta un rol genérico llamado "staff". Se validan los IDs configurados.
   const canStaff = hasConfiguredStaffRole || hasRole(panelUser, "staff");
   const canBoss = hasConfiguredStaffRole || hasRole(panelUser, "boss");
 
@@ -106,7 +105,14 @@ function attachCurrentUser(client) {
   return async (req, res, next) => {
     req.panelUser = getUserById(req.session.panelUserId);
     if (!req.panelUser || !req.panelUser.active) {
-      req.session.panelUserId = null;
+      delete req.session.panelUserId;
+      delete req.session.panelRole;
+      delete req.session.panelUsername;
+      delete req.session.authenticated;
+      delete req.session.username;
+      delete req.session.memberAuthenticated;
+      delete req.session.memberUserId;
+      delete req.session.memberUsername;
       return res.status(401).json({ ok: false, error: "Sesión caducada. Vuelve a iniciar sesión." });
     }
 
@@ -136,6 +142,39 @@ function eventToCalendar(salida) {
       creatorName: salida.creatorName
     }
   };
+}
+
+function mirrorPanelSessionToLegacySessions(req, user, permissions) {
+  req.session.panelUserId = user.id;
+  req.session.panelRole = user.role;
+  req.session.panelUsername = user.username;
+
+  /*
+    Puente con el panel antiguo de tiradas.
+    Sin esto, al entrar desde el panel nuevo como staff, el panel de tiradas
+    no reconoce la sesión y vuelve a pedir login.
+  */
+  if (permissions?.canStaff) {
+    req.session.authenticated = true;
+    req.session.username = user.username;
+  } else {
+    delete req.session.authenticated;
+    delete req.session.username;
+  }
+
+  /*
+    Puente con la vista de miembro.
+    Si el usuario web tiene Discord ID, puede ver su zona sin otro login.
+  */
+  if (user.discordUserId) {
+    req.session.memberAuthenticated = true;
+    req.session.memberUserId = user.discordUserId;
+    req.session.memberUsername = user.username;
+  } else {
+    delete req.session.memberAuthenticated;
+    delete req.session.memberUserId;
+    delete req.session.memberUsername;
+  }
 }
 
 async function notifySalidaToDiscord(client, salida, action, actor) {
@@ -209,9 +248,9 @@ function attachPanelRoutes(app, { client } = {}) {
         return res.status(401).json({ ok: false, error: "Usuario o contraseña incorrectos." });
       }
 
-      req.session.panelUserId = user.id;
-      req.session.panelRole = user.role;
-      req.session.panelUsername = user.username;
+      const permissions = await buildPermissions(client, user);
+      mirrorPanelSessionToLegacySessions(req, user, permissions);
+
       req.session.save(error => {
         if (error) {
           console.error("[PANEL] Error guardando sesión:", error);
@@ -226,9 +265,17 @@ function attachPanelRoutes(app, { client } = {}) {
   });
 
   app.post("/api/panel/logout", requirePanelApi, (req, res) => {
-    req.session.panelUserId = null;
-    req.session.panelRole = null;
-    req.session.panelUsername = null;
+    delete req.session.panelUserId;
+    delete req.session.panelRole;
+    delete req.session.panelUsername;
+
+    delete req.session.authenticated;
+    delete req.session.username;
+
+    delete req.session.memberAuthenticated;
+    delete req.session.memberUserId;
+    delete req.session.memberUsername;
+
     req.session.save(() => res.json({ ok: true }));
   });
 
