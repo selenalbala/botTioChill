@@ -8,6 +8,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  UserSelectMenuBuilder,
   MessageFlags,
   PermissionFlagsBits
 } = require("discord.js");
@@ -183,6 +184,14 @@ function buildPanelRows() {
             emoji: "📊"
           }
         )
+    ),
+
+    new ActionRowBuilder().addComponents(
+      new UserSelectMenuBuilder()
+        .setCustomId("tirada_consulta_user_select")
+        .setPlaceholder("Jefatura: ver tiradas de otra persona...")
+        .setMinValues(1)
+        .setMaxValues(1)
     )
   ];
 }
@@ -280,7 +289,20 @@ function schedulePanelAvailabilityRefresh() {
 
 function hasAnyRole(member, roleIds) {
   if (!member || !roleIds.length) return false;
-  return roleIds.some(roleId => member.roles.cache.has(roleId));
+
+  const roles = member.roles;
+
+  // GuildMember normal: member.roles.cache.has(id)
+  if (roles?.cache) {
+    return roleIds.some(roleId => roles.cache.has(roleId));
+  }
+
+  // A veces Discord entrega los roles como array de IDs en interacciones.
+  if (Array.isArray(roles)) {
+    return roleIds.some(roleId => roles.includes(roleId));
+  }
+
+  return false;
 }
 
 function hasAllowedTiradaRole(member) {
@@ -428,6 +450,37 @@ async function handleTiradaStatsSelect(interaction) {
   });
 }
 
+async function handleTiradaUserSelect(interaction) {
+  if (interaction.channelId !== TARGET_CHANNEL_ID) {
+    await interaction.reply({
+      content: "Este menú solo funciona en el canal configurado para las tiradas.",
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  if (!canViewOtherUsers(interaction)) {
+    await denyNoStatsPermission(interaction);
+    return;
+  }
+
+  const userId = interaction.values?.[0];
+  const selectedUser = interaction.users?.get(userId) || await client.users.fetch(userId).catch(() => null);
+
+  if (!selectedUser) {
+    await interaction.reply({
+      content: "No he podido encontrar ese usuario.",
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  await interaction.reply({
+    content: buildUserStatsText(selectedUser),
+    flags: MessageFlags.Ephemeral
+  });
+}
+
 function buildGeneralTotalsText() {
   const current = getCurrentPeriod();
   const semana = db.getTotalWeek(current.isoYear, current.isoWeek);
@@ -472,6 +525,13 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === "tirada_consulta_select") {
         await handleTiradaStatsSelect(interaction);
+      }
+      return;
+    }
+
+    if (interaction.isUserSelectMenu()) {
+      if (interaction.customId === "tirada_consulta_user_select") {
+        await handleTiradaUserSelect(interaction);
       }
       return;
     }
