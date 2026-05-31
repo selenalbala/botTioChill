@@ -84,12 +84,21 @@ function insertTirada(row) {
 
 function getLastTiradaByUser(userId) {
   return db.prepare(`
-    SELECT timestamp_utc, fecha_local
+    SELECT timestamp_utc, fecha_local, display_name, username, user_id
     FROM tiradas
     WHERE user_id = ?
     ORDER BY timestamp_utc DESC
     LIMIT 1
   `).get(userId);
+}
+
+function getLastTirada() {
+  return db.prepare(`
+    SELECT timestamp_utc, fecha_local, display_name, username, user_id
+    FROM tiradas
+    ORDER BY timestamp_utc DESC
+    LIMIT 1
+  `).get();
 }
 
 function getTotalGeneral() {
@@ -161,6 +170,7 @@ function getDbPath() {
 module.exports = {
   insertTirada,
   getLastTiradaByUser,
+  getLastTirada,
   getTotalGeneral,
   getTotalByUser,
   getTotalByUserMonth,

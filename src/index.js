@@ -31,6 +31,8 @@ const client = new Client({
   ]
 });
 
+let panelRefreshTimeout = null;
+
 function formatNumber(value) {
   return new Intl.NumberFormat("es-ES").format(Number(value || 0));
 }
@@ -63,15 +65,14 @@ function formatRemaining(ms) {
   return `${minutes}min`;
 }
 
-function getNextTiradaInfo(userId) {
-  const last = db.getLastTiradaByUser(userId);
-
+function buildNextTiradaInfoFromRow(last) {
   if (!last?.timestamp_utc) {
     return {
       canRoll: true,
       lastAt: null,
       nextAt: null,
-      remainingMs: 0
+      remainingMs: 0,
+      last
     };
   }
 
@@ -82,7 +83,8 @@ function getNextTiradaInfo(userId) {
       canRoll: true,
       lastAt: null,
       nextAt: null,
-      remainingMs: 0
+      remainingMs: 0,
+      last
     };
   }
 
@@ -93,20 +95,52 @@ function getNextTiradaInfo(userId) {
     canRoll: remainingMs <= 0,
     lastAt,
     nextAt,
-    remainingMs: Math.max(0, remainingMs)
+    remainingMs: Math.max(0, remainingMs),
+    last
   };
+}
+
+function getNextTiradaInfo(userId) {
+  return buildNextTiradaInfoFromRow(db.getLastTiradaByUser(userId));
+}
+
+function getNextGlobalTiradaInfo() {
+  return buildNextTiradaInfoFromRow(db.getLastTirada());
 }
 
 function buildNextTiradaText(userId) {
   const info = getNextTiradaInfo(userId);
 
   if (!info.nextAt || info.canRoll) {
-    return "⏱️ **Siguiente tirada:** disponible ahora.";
+    return "⏱️ **Tu siguiente tirada:** disponible ahora.";
+  }
+
+  return [
+    `⏱️ **Tu siguiente tirada:** ${discordTimestamp(info.nextAt, "t")} · ${discordTimestamp(info.nextAt, "R")}.`,
+    `Te queda aprox. **${formatRemaining(info.remainingMs)}**.`
+  ].join("\n");
+}
+
+function buildPanelNextTiradaText() {
+  const info = getNextGlobalTiradaInfo();
+
+  if (!info.nextAt) {
+    return "⏱️ **Siguiente tirada:** disponible ahora. Aún no hay tiradas registradas.";
+  }
+
+  const lastName = info.last?.display_name || info.last?.username || "alguien";
+
+  if (info.canRoll) {
+    return [
+      "⏱️ **Siguiente tirada:** disponible ahora.",
+      `Última tirada: **${lastName}** ${discordTimestamp(info.lastAt, "R")}.`
+    ].join("\n");
   }
 
   return [
     `⏱️ **Siguiente tirada:** ${discordTimestamp(info.nextAt, "t")} · ${discordTimestamp(info.nextAt, "R")}.`,
-    `Te queda aprox. **${formatRemaining(info.remainingMs)}**.`
+    `Queda aprox. **${formatRemaining(info.remainingMs)}**.`,
+    `Última tirada: **${lastName}** ${discordTimestamp(info.lastAt, "R")}.`
   ].join("\n");
 }
 
@@ -162,8 +196,10 @@ function buildPanelContent() {
     "🧪 **Panel de meta**",
     "",
     `Pulsa **+1 tirada** para sumar **${META_PER_TIRADA} de meta** a tu contador.`,
-    "Después de pulsar **+1 tirada**, el bot te dirá automáticamente a qué hora puedes hacer la siguiente.",
+    "La **siguiente tirada** se actualiza aquí automáticamente para que todos la vean.",
     "Usa **Ver mis tiradas...** para consultar tus tiradas en privado.",
+    "",
+    buildPanelNextTiradaText(),
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     formatTiradaMetaLine("📅 **Total semanal**", totalSemana),
@@ -211,12 +247,35 @@ async function refreshPanel() {
   if (existing) {
     const edited = await existing.edit(payload);
     db.savePanelMessage(channel.id, edited.id);
+    schedulePanelAvailabilityRefresh();
     return edited;
   }
 
   const sent = await channel.send(payload);
   db.savePanelMessage(channel.id, sent.id);
+  schedulePanelAvailabilityRefresh();
   return sent;
+}
+
+function schedulePanelAvailabilityRefresh() {
+  if (panelRefreshTimeout) {
+    clearTimeout(panelRefreshTimeout);
+    panelRefreshTimeout = null;
+  }
+
+  const info = getNextGlobalTiradaInfo();
+
+  if (!info.nextAt || info.canRoll) return;
+
+  const delay = Math.min(info.remainingMs + 1500, 2_147_483_647);
+
+  panelRefreshTimeout = setTimeout(async () => {
+    try {
+      await refreshPanel();
+    } catch (error) {
+      console.error("No se pudo refrescar el panel al acabar el tiempo:", error.message);
+    }
+  }, delay);
 }
 
 function hasAnyRole(member, roleIds) {
@@ -258,14 +317,14 @@ async function handleTiradaButton(interaction) {
     return;
   }
 
-  const beforeRoll = getNextTiradaInfo(interaction.user.id);
+  const beforeRoll = getNextGlobalTiradaInfo();
 
   if (!beforeRoll.canRoll) {
     await interaction.reply({
       content: [
-        "⏳ Todavía no puedes registrar otra tirada.",
+        "⏳ Todavía no se puede registrar otra tirada.",
         "",
-        buildNextTiradaText(interaction.user.id)
+        buildPanelNextTiradaText()
       ].join("\n"),
       flags: MessageFlags.Ephemeral
     });
@@ -291,7 +350,7 @@ async function handleTiradaButton(interaction) {
       `🗓️ Este mes llevas **${formatNumber(mensual)}** tirada(s), **${formatMeta(mensual)} de meta**.`,
       `📊 Total histórico: **${formatNumber(total)}** tirada(s), **${formatMeta(total)} de meta**.`,
       "",
-      buildNextTiradaText(interaction.user.id)
+      buildPanelNextTiradaText()
     ].join("\n"),
     flags: MessageFlags.Ephemeral
   });
@@ -311,7 +370,7 @@ function buildUserStatsText(user) {
     `🗓️ Mes actual: **${formatNumber(mensual)}** tirada(s) · **${formatMeta(mensual)} de meta**`,
     `📊 Total histórico: **${formatNumber(total)}** tirada(s) · **${formatMeta(total)} de meta**`,
     "",
-    buildNextTiradaText(user.id)
+    buildPanelNextTiradaText()
   ].join("\n");
 }
 
@@ -324,7 +383,7 @@ function buildUserStatsOptionText(user, option) {
       `📅 ${user}, esta semana llevas **${formatNumber(semanal)}** tirada(s).`,
       `Total de meta semanal: **${formatMeta(semanal)}**.`,
       "",
-      buildNextTiradaText(user.id)
+      buildPanelNextTiradaText()
     ].join("\n");
   }
 
@@ -334,7 +393,7 @@ function buildUserStatsOptionText(user, option) {
       `🗓️ ${user}, este mes llevas **${formatNumber(mensual)}** tirada(s).`,
       `Total de meta mensual: **${formatMeta(mensual)}**.`,
       "",
-      buildNextTiradaText(user.id)
+      buildPanelNextTiradaText()
     ].join("\n");
   }
 
@@ -344,7 +403,7 @@ function buildUserStatsOptionText(user, option) {
       `📊 ${user}, tienes **${formatNumber(total)}** tirada(s) en total.`,
       `Total de meta histórico: **${formatMeta(total)}**.`,
       "",
-      buildNextTiradaText(user.id)
+      buildPanelNextTiradaText()
     ].join("\n");
   }
 
