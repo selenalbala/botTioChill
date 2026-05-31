@@ -187,11 +187,10 @@ function buildPanelRows() {
     ),
 
     new ActionRowBuilder().addComponents(
-      new UserSelectMenuBuilder()
-        .setCustomId("tirada_consulta_user_select")
-        .setPlaceholder("Jefatura: ver tiradas de otra persona...")
-        .setMinValues(1)
-        .setMaxValues(1)
+      new ButtonBuilder()
+        .setCustomId("tirada_admin_open_user_select")
+        .setLabel("Jefatura: consultar usuario")
+        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
@@ -310,9 +309,14 @@ function hasAllowedTiradaRole(member) {
   return hasAnyRole(member, ALLOWED_TIRADA_ROLE_IDS);
 }
 
-function canViewOtherUsers(interaction) {
-  if (interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return true;
-  return hasAnyRole(interaction.member, STATS_ADMIN_ROLE_IDS);
+async function canViewOtherUsers(interaction) {
+  if (!interaction.guild) return false;
+
+  // Importante: NO dejamos pasar por permisos como ManageGuild/Administrator.
+  // Solo pueden consultar otros usuarios quienes tengan uno de los roles exactos
+  // configurados en STATS_ADMIN_ROLE_IDS.
+  const member = await interaction.guild.members.fetch(interaction.user.id).catch(() => interaction.member);
+  return hasAnyRole(member, STATS_ADMIN_ROLE_IDS);
 }
 
 async function denyNoStatsPermission(interaction) {
@@ -450,6 +454,35 @@ async function handleTiradaStatsSelect(interaction) {
   });
 }
 
+async function handleAdminOpenUserSelect(interaction) {
+  if (interaction.channelId !== TARGET_CHANNEL_ID) {
+    await interaction.reply({
+      content: "Este botón solo funciona en el canal configurado para las tiradas.",
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  if (!(await canViewOtherUsers(interaction))) {
+    await denyNoStatsPermission(interaction);
+    return;
+  }
+
+  await interaction.reply({
+    content: "Selecciona el usuario del que quieres ver las tiradas:",
+    components: [
+      new ActionRowBuilder().addComponents(
+        new UserSelectMenuBuilder()
+          .setCustomId("tirada_admin_private_user_select")
+          .setPlaceholder("Elegir usuario...")
+          .setMinValues(1)
+          .setMaxValues(1)
+      )
+    ],
+    flags: MessageFlags.Ephemeral
+  });
+}
+
 async function handleTiradaUserSelect(interaction) {
   if (interaction.channelId !== TARGET_CHANNEL_ID) {
     await interaction.reply({
@@ -459,7 +492,7 @@ async function handleTiradaUserSelect(interaction) {
     return;
   }
 
-  if (!canViewOtherUsers(interaction)) {
+  if (!(await canViewOtherUsers(interaction))) {
     await denyNoStatsPermission(interaction);
     return;
   }
@@ -519,6 +552,10 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.customId === "tirada_plus_one") {
         await handleTiradaButton(interaction);
       }
+
+      if (interaction.customId === "tirada_admin_open_user_select") {
+        await handleAdminOpenUserSelect(interaction);
+      }
       return;
     }
 
@@ -530,7 +567,8 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.isUserSelectMenu()) {
-      if (interaction.customId === "tirada_consulta_user_select") {
+      // Acepta el nuevo selector privado y también el ID antiguo por si queda algún panel viejo sin actualizar.
+      if (interaction.customId === "tirada_admin_private_user_select" || interaction.customId === "tirada_consulta_user_select") {
         await handleTiradaUserSelect(interaction);
       }
       return;
@@ -566,7 +604,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.commandName === "tiradas_usuario") {
       const user = interaction.options.getUser("usuario", true);
 
-      if (user.id !== interaction.user.id && !canViewOtherUsers(interaction)) {
+      if (user.id !== interaction.user.id && !(await canViewOtherUsers(interaction))) {
         await denyNoStatsPermission(interaction);
         return;
       }
@@ -599,7 +637,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      if (user && user.id !== interaction.user.id && !canViewOtherUsers(interaction)) {
+      if (user && user.id !== interaction.user.id && !(await canViewOtherUsers(interaction))) {
         await denyNoStatsPermission(interaction);
         return;
       }
@@ -632,7 +670,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      if (user && user.id !== interaction.user.id && !canViewOtherUsers(interaction)) {
+      if (user && user.id !== interaction.user.id && !(await canViewOtherUsers(interaction))) {
         await denyNoStatsPermission(interaction);
         return;
       }
