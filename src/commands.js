@@ -15,11 +15,11 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("mis_tiradas")
-    .setDescription("Consulta tus tiradas de esta semana, este mes y el total"),
+    .setDescription("Consulta tus tiradas, tu meta y cuándo puedes hacer la siguiente"),
 
   new SlashCommandBuilder()
     .setName("tiradas_usuario")
-    .setDescription("Consulta las tiradas de un usuario")
+    .setDescription("Consulta las tiradas de un usuario. Solo roles autorizados pueden consultar a otros.")
     .addUserOption(option =>
       option
         .setName("usuario")
@@ -29,32 +29,11 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("total_tiradas")
-    .setDescription("Muestra las tiradas totales de la semana, mes y histórico"),
-
-  new SlashCommandBuilder()
-    .setName("top_tiradas")
-    .setDescription("Muestra el ranking de tiradas")
-    .addStringOption(option =>
-      option
-        .setName("periodo")
-        .setDescription("Periodo del ranking")
-        .setRequired(false)
-        .addChoices(
-          { name: "Semana actual", value: "semana" },
-          { name: "Mes actual", value: "mes" },
-          { name: "Histórico", value: "total" }
-        )
-    )
-    .addIntegerOption(option =>
-      option
-        .setName("limite")
-        .setDescription("Cantidad de usuarios a mostrar")
-        .setRequired(false)
-    ),
+    .setDescription("Muestra el total semanal y mensual de meta"),
 
   new SlashCommandBuilder()
     .setName("tiradas_mes")
-    .setDescription("Consulta tiradas de un mes concreto")
+    .setDescription("Consulta tiradas y meta de un mes concreto")
     .addIntegerOption(option =>
       option
         .setName("anio")
@@ -76,7 +55,7 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("tiradas_semana")
-    .setDescription("Consulta tiradas de una semana concreta")
+    .setDescription("Consulta tiradas y meta de una semana concreta")
     .addIntegerOption(option =>
       option
         .setName("anio")

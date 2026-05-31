@@ -7,11 +7,19 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
   MessageFlags,
   PermissionFlagsBits
 } = require("discord.js");
 
-const { TARGET_CHANNEL_ID, ALLOWED_TIRADA_ROLE_IDS } = require("./config");
+const {
+  TARGET_CHANNEL_ID,
+  ALLOWED_TIRADA_ROLE_IDS,
+  STATS_ADMIN_ROLE_IDS,
+  META_PER_TIRADA,
+  TIRADA_COOLDOWN_MINUTES
+} = require("./config");
+
 const db = require("./db");
 const { buildTiradaRow, getCurrentPeriod } = require("./stats");
 
@@ -23,6 +31,85 @@ const client = new Client({
   ]
 });
 
+function formatNumber(value) {
+  return new Intl.NumberFormat("es-ES").format(Number(value || 0));
+}
+
+function metaFromTiradas(tiradas) {
+  return Number(tiradas || 0) * META_PER_TIRADA;
+}
+
+function formatMeta(tiradas) {
+  return formatNumber(metaFromTiradas(tiradas));
+}
+
+function formatTiradaMetaLine(label, tiradas) {
+  return `${label}: **${formatMeta(tiradas)} de meta** (${formatNumber(tiradas)} tirada(s) × ${META_PER_TIRADA})`;
+}
+
+function discordTimestamp(date, style = "t") {
+  return `<t:${Math.floor(date.getTime() / 1000)}:${style}>`;
+}
+
+function formatRemaining(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return "0 min";
+
+  const totalMinutes = Math.ceil(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0 && minutes > 0) return `${hours}h ${minutes}min`;
+  if (hours > 0) return `${hours}h`;
+  return `${minutes}min`;
+}
+
+function getNextTiradaInfo(userId) {
+  const last = db.getLastTiradaByUser(userId);
+
+  if (!last?.timestamp_utc) {
+    return {
+      canRoll: true,
+      lastAt: null,
+      nextAt: null,
+      remainingMs: 0
+    };
+  }
+
+  const lastAt = new Date(last.timestamp_utc);
+
+  if (Number.isNaN(lastAt.getTime())) {
+    return {
+      canRoll: true,
+      lastAt: null,
+      nextAt: null,
+      remainingMs: 0
+    };
+  }
+
+  const nextAt = new Date(lastAt.getTime() + TIRADA_COOLDOWN_MINUTES * 60 * 1000);
+  const remainingMs = nextAt.getTime() - Date.now();
+
+  return {
+    canRoll: remainingMs <= 0,
+    lastAt,
+    nextAt,
+    remainingMs: Math.max(0, remainingMs)
+  };
+}
+
+function buildNextTiradaText(userId) {
+  const info = getNextTiradaInfo(userId);
+
+  if (!info.nextAt || info.canRoll) {
+    return "⏱️ **Siguiente tirada:** disponible ahora.";
+  }
+
+  return [
+    `⏱️ **Siguiente tirada:** ${discordTimestamp(info.nextAt, "t")} · ${discordTimestamp(info.nextAt, "R")}.`,
+    `Te queda aprox. **${formatRemaining(info.remainingMs)}**.`
+  ].join("\n");
+}
+
 function buildPanelRows() {
   return [
     new ActionRowBuilder().addComponents(
@@ -30,40 +117,62 @@ function buildPanelRows() {
         .setCustomId("tirada_plus_one")
         .setLabel("+1 tirada")
         .setStyle(ButtonStyle.Primary)
+    ),
+
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("tirada_consulta_select")
+        .setPlaceholder("Ver mis tiradas...")
+        .addOptions(
+          {
+            label: "Resumen",
+            description: "Semana, mes, total y siguiente tirada",
+            value: "resumen",
+            emoji: "🎲"
+          },
+          {
+            label: "Semana actual",
+            description: "Tus tiradas y meta de esta semana",
+            value: "semana",
+            emoji: "📅"
+          },
+          {
+            label: "Mes actual",
+            description: "Tus tiradas y meta de este mes",
+            value: "mes",
+            emoji: "🗓️"
+          },
+          {
+            label: "Total histórico",
+            description: "Todas tus tiradas registradas",
+            value: "total",
+            emoji: "📊"
+          },
+          {
+            label: "Siguiente tirada",
+            description: "Cuánto queda para poder tirar otra vez",
+            value: "siguiente",
+            emoji: "⏱️"
+          }
+        )
     )
   ];
 }
 
-function formatTop(rows) {
-  if (!rows.length) return "Todavía no hay tiradas registradas.";
-
-  return rows
-    .map((row, index) => {
-      const name = row.display_name || row.username || row.user_id;
-      return `${index + 1}. **${name}** — ${row.total}`;
-    })
-    .join("\n");
-}
-
 function buildPanelContent() {
   const period = getCurrentPeriod();
-  const total = db.getTotalGeneral();
   const totalMes = db.getTotalMonth(period.year, period.month);
   const totalSemana = db.getTotalWeek(period.isoYear, period.isoWeek);
-  const topSemana = db.getTopUsersWeek(period.isoYear, period.isoWeek, 5);
 
   return [
     "🎲 **Panel de tiradas**",
     "",
-    "Pulsa **+1 tirada** para sumar una tirada a tu contador.",
+    `Pulsa **+1 tirada** para sumar una tirada a tu contador. Cada tirada cuenta como **${META_PER_TIRADA} de meta**.`,
+    "Usa **Ver mis tiradas...** para consultar tus tiradas en privado y ver cuándo puedes hacer la siguiente.",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
-    `📅 **Esta semana:** ${totalSemana} tirada(s)`,
-    `🗓️ **Este mes:** ${totalMes} tirada(s)`,
-    `📊 **Total histórico:** ${total} tirada(s)`,
-    "",
-    "🏆 **Top semanal:**",
-    formatTop(topSemana)
+    formatTiradaMetaLine("📅 **Total semanal**", totalSemana),
+    formatTiradaMetaLine("🗓️ **Total mensual**", totalMes)
   ].join("\n");
 }
 
@@ -115,9 +224,26 @@ async function refreshPanel() {
   return sent;
 }
 
-function hasAllowedRole(member) {
+function hasAnyRole(member, roleIds) {
+  if (!member || !roleIds.length) return false;
+  return roleIds.some(roleId => member.roles.cache.has(roleId));
+}
+
+function hasAllowedTiradaRole(member) {
   if (!ALLOWED_TIRADA_ROLE_IDS.length) return true;
-  return ALLOWED_TIRADA_ROLE_IDS.some(roleId => member.roles.cache.has(roleId));
+  return hasAnyRole(member, ALLOWED_TIRADA_ROLE_IDS);
+}
+
+function canViewOtherUsers(interaction) {
+  if (interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return true;
+  return hasAnyRole(interaction.member, STATS_ADMIN_ROLE_IDS);
+}
+
+async function denyNoStatsPermission(interaction) {
+  await interaction.reply({
+    content: "No tienes permiso para consultar las tiradas de otra persona.",
+    flags: MessageFlags.Ephemeral
+  });
 }
 
 async function handleTiradaButton(interaction) {
@@ -129,9 +255,23 @@ async function handleTiradaButton(interaction) {
     return;
   }
 
-  if (!interaction.member || !hasAllowedRole(interaction.member)) {
+  if (!interaction.member || !hasAllowedTiradaRole(interaction.member)) {
     await interaction.reply({
       content: "No tienes permiso para usar este botón.",
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  const beforeRoll = getNextTiradaInfo(interaction.user.id);
+
+  if (!beforeRoll.canRoll) {
+    await interaction.reply({
+      content: [
+        "⏳ Todavía no puedes registrar otra tirada.",
+        "",
+        buildNextTiradaText(interaction.user.id)
+      ].join("\n"),
       flags: MessageFlags.Ephemeral
     });
     return;
@@ -150,10 +290,13 @@ async function handleTiradaButton(interaction) {
   await interaction.reply({
     content: [
       "✅ Tirada registrada correctamente.",
+      `Has sumado **${META_PER_TIRADA} de meta**.`,
       "",
-      `📅 Esta semana llevas **${semanal}** tirada(s).`,
-      `🗓️ Este mes llevas **${mensual}** tirada(s).`,
-      `📊 Total histórico: **${total}** tirada(s).`
+      `📅 Esta semana llevas **${formatNumber(semanal)}** tirada(s), **${formatMeta(semanal)} de meta**.`,
+      `🗓️ Este mes llevas **${formatNumber(mensual)}** tirada(s), **${formatMeta(mensual)} de meta**.`,
+      `📊 Total histórico: **${formatNumber(total)}** tirada(s), **${formatMeta(total)} de meta**.`,
+      "",
+      buildNextTiradaText(interaction.user.id)
     ].join("\n"),
     flags: MessageFlags.Ephemeral
   });
@@ -167,37 +310,96 @@ function buildUserStatsText(user) {
   const mensual = db.getTotalByUserMonth(user.id, period.year, period.month);
 
   return [
-    `🎲 Tiradas de ${user}`,
+    `🎲 **Tiradas de ${user}**`,
     "",
-    `📅 Semana actual: **${semanal}**`,
-    `🗓️ Mes actual: **${mensual}**`,
-    `📊 Total histórico: **${total}**`
+    `📅 Semana actual: **${formatNumber(semanal)}** tirada(s) · **${formatMeta(semanal)} de meta**`,
+    `🗓️ Mes actual: **${formatNumber(mensual)}** tirada(s) · **${formatMeta(mensual)} de meta**`,
+    `📊 Total histórico: **${formatNumber(total)}** tirada(s) · **${formatMeta(total)} de meta**`,
+    "",
+    buildNextTiradaText(user.id)
   ].join("\n");
 }
 
-function getPeriodLabel(period) {
-  if (period === "semana") return "esta semana";
-  if (period === "mes") return "este mes";
-  return "histórico";
+function buildUserStatsOptionText(user, option) {
+  const period = getCurrentPeriod();
+
+  if (option === "semana") {
+    const semanal = db.getTotalByUserWeek(user.id, period.isoYear, period.isoWeek);
+    return [
+      `📅 ${user}, esta semana llevas **${formatNumber(semanal)}** tirada(s).`,
+      `Total de meta semanal: **${formatMeta(semanal)}**.`,
+      "",
+      buildNextTiradaText(user.id)
+    ].join("\n");
+  }
+
+  if (option === "mes") {
+    const mensual = db.getTotalByUserMonth(user.id, period.year, period.month);
+    return [
+      `🗓️ ${user}, este mes llevas **${formatNumber(mensual)}** tirada(s).`,
+      `Total de meta mensual: **${formatMeta(mensual)}**.`,
+      "",
+      buildNextTiradaText(user.id)
+    ].join("\n");
+  }
+
+  if (option === "total") {
+    const total = db.getTotalByUser(user.id);
+    return [
+      `📊 ${user}, tienes **${formatNumber(total)}** tirada(s) en total.`,
+      `Total de meta histórico: **${formatMeta(total)}**.`,
+      "",
+      buildNextTiradaText(user.id)
+    ].join("\n");
+  }
+
+  if (option === "siguiente") {
+    return buildNextTiradaText(user.id);
+  }
+
+  return buildUserStatsText(user);
 }
 
-function getTopByPeriod(period, limit) {
+async function handleTiradaStatsSelect(interaction) {
+  if (interaction.channelId !== TARGET_CHANNEL_ID) {
+    await interaction.reply({
+      content: "Este menú solo funciona en el canal configurado para las tiradas.",
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  const option = interaction.values?.[0] || "resumen";
+
+  await interaction.reply({
+    content: buildUserStatsOptionText(interaction.user, option),
+    flags: MessageFlags.Ephemeral
+  });
+}
+
+function buildGeneralTotalsText() {
   const current = getCurrentPeriod();
+  const semana = db.getTotalWeek(current.isoYear, current.isoWeek);
+  const mes = db.getTotalMonth(current.year, current.month);
 
-  if (period === "semana") {
-    return db.getTopUsersWeek(current.isoYear, current.isoWeek, limit);
-  }
+  return [
+    "📊 **Total de meta**",
+    "",
+    formatTiradaMetaLine("📅 **Semana actual**", semana),
+    formatTiradaMetaLine("🗓️ **Mes actual**", mes)
+  ].join("\n");
+}
 
-  if (period === "mes") {
-    return db.getTopUsersMonth(current.year, current.month, limit);
-  }
-
-  return db.getTopUsers(limit);
+function buildPeriodStatsText({ user, total, label }) {
+  const prefix = user ? `${user} tiene` : "Hay";
+  return `${prefix} **${formatNumber(total)}** tirada(s) en **${label}**: **${formatMeta(total)} de meta**.`;
 }
 
 client.once(Events.ClientReady, async () => {
   console.log(`Bot encendido como ${client.user.tag}`);
   console.log(`DB PATH: ${db.getDbPath()}`);
+  console.log(`Cada tirada suma ${META_PER_TIRADA} de meta.`);
+  console.log(`Cooldown de tirada: ${TIRADA_COOLDOWN_MINUTES} minutos.`);
 
   try {
     await refreshPanel();
@@ -212,6 +414,13 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
       if (interaction.customId === "tirada_plus_one") {
         await handleTiradaButton(interaction);
+      }
+      return;
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === "tirada_consulta_select") {
+        await handleTiradaStatsSelect(interaction);
       }
       return;
     }
@@ -246,6 +455,11 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.commandName === "tiradas_usuario") {
       const user = interaction.options.getUser("usuario", true);
 
+      if (user.id !== interaction.user.id && !canViewOtherUsers(interaction)) {
+        await denyNoStatsPermission(interaction);
+        return;
+      }
+
       await interaction.reply({
         content: buildUserStatsText(user),
         flags: MessageFlags.Ephemeral
@@ -254,28 +468,8 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.commandName === "total_tiradas") {
-      const current = getCurrentPeriod();
-
       await interaction.reply({
-        content: [
-          "📊 **Resumen de tiradas**",
-          "",
-          `📅 Esta semana: **${db.getTotalWeek(current.isoYear, current.isoWeek)}**`,
-          `🗓️ Este mes: **${db.getTotalMonth(current.year, current.month)}**`,
-          `📊 Total histórico: **${db.getTotalGeneral()}**`
-        ].join("\n"),
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
-
-    if (interaction.commandName === "top_tiradas") {
-      const limite = Math.min(interaction.options.getInteger("limite") || 10, 25);
-      const periodo = interaction.options.getString("periodo") || "total";
-      const rows = getTopByPeriod(periodo, limite);
-
-      await interaction.reply({
-        content: `🏆 **Top ${getPeriodLabel(periodo)}**\n\n${formatTop(rows)}`,
+        content: buildGeneralTotalsText(),
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -294,14 +488,21 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (user && user.id !== interaction.user.id && !canViewOtherUsers(interaction)) {
+        await denyNoStatsPermission(interaction);
+        return;
+      }
+
       const total = user
         ? db.getTotalByUserMonth(user.id, anio, mes)
         : db.getTotalMonth(anio, mes);
 
       await interaction.reply({
-        content: user
-          ? `${user} tiene **${total}** tirada(s) en **${mes}/${anio}**.`
-          : `En **${mes}/${anio}** hay **${total}** tirada(s).`,
+        content: buildPeriodStatsText({
+          user,
+          total,
+          label: `${mes}/${anio}`
+        }),
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -320,14 +521,21 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      if (user && user.id !== interaction.user.id && !canViewOtherUsers(interaction)) {
+        await denyNoStatsPermission(interaction);
+        return;
+      }
+
       const total = user
         ? db.getTotalByUserWeek(user.id, anio, semana)
         : db.getTotalWeek(anio, semana);
 
       await interaction.reply({
-        content: user
-          ? `${user} tiene **${total}** tirada(s) en la semana **${semana}/${anio}**.`
-          : `En la semana **${semana}/${anio}** hay **${total}** tirada(s).`,
+        content: buildPeriodStatsText({
+          user,
+          total,
+          label: `semana ${semana}/${anio}`
+        }),
         flags: MessageFlags.Ephemeral
       });
       return;

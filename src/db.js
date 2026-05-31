@@ -6,7 +6,6 @@ const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");
 
-// 1) Crear tablas primero, SIN índices que puedan fallar si la BD ya existía antigua.
 db.exec(`
 CREATE TABLE IF NOT EXISTS tiradas (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,42 +28,22 @@ CREATE TABLE IF NOT EXISTS panel_messages (
   channel_id TEXT PRIMARY KEY,
   message_id TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_tiradas_user ON tiradas(user_id);
+CREATE INDEX IF NOT EXISTS idx_tiradas_user_time ON tiradas(user_id, timestamp_utc);
+CREATE INDEX IF NOT EXISTS idx_tiradas_month ON tiradas(anio, mes);
+CREATE INDEX IF NOT EXISTS idx_tiradas_week ON tiradas(anio_semana_iso, semana_iso);
 `);
 
-// 2) Migración para bases antiguas: añade columnas que falten sin borrar datos.
+/*
+  Si tu BD venía de una versión anterior, esto añade columnas nuevas sin borrar datos.
+*/
 const columns = db.prepare("PRAGMA table_info(tiradas)").all().map(col => col.name);
 
 if (!columns.includes("anio_semana_iso")) {
   db.exec("ALTER TABLE tiradas ADD COLUMN anio_semana_iso INTEGER");
   db.exec("UPDATE tiradas SET anio_semana_iso = anio WHERE anio_semana_iso IS NULL");
 }
-
-if (!columns.includes("conteo")) {
-  db.exec("ALTER TABLE tiradas ADD COLUMN conteo INTEGER NOT NULL DEFAULT 1");
-}
-
-if (!columns.includes("guild_id")) {
-  db.exec("ALTER TABLE tiradas ADD COLUMN guild_id TEXT");
-}
-
-if (!columns.includes("channel_id")) {
-  db.exec("ALTER TABLE tiradas ADD COLUMN channel_id TEXT");
-}
-
-if (!columns.includes("username")) {
-  db.exec("ALTER TABLE tiradas ADD COLUMN username TEXT");
-}
-
-if (!columns.includes("display_name")) {
-  db.exec("ALTER TABLE tiradas ADD COLUMN display_name TEXT");
-}
-
-// 3) Ahora sí: crear índices cuando ya existen las columnas.
-db.exec(`
-CREATE INDEX IF NOT EXISTS idx_tiradas_user ON tiradas(user_id);
-CREATE INDEX IF NOT EXISTS idx_tiradas_month ON tiradas(anio, mes);
-CREATE INDEX IF NOT EXISTS idx_tiradas_week ON tiradas(anio_semana_iso, semana_iso);
-`);
 
 const insertStmt = db.prepare(`
 INSERT INTO tiradas (
@@ -101,6 +80,16 @@ VALUES (
 
 function insertTirada(row) {
   return insertStmt.run(row);
+}
+
+function getLastTiradaByUser(userId) {
+  return db.prepare(`
+    SELECT timestamp_utc, fecha_local
+    FROM tiradas
+    WHERE user_id = ?
+    ORDER BY timestamp_utc DESC
+    LIMIT 1
+  `).get(userId);
 }
 
 function getTotalGeneral() {
@@ -153,47 +142,6 @@ function getTotalWeek(isoYear, isoWeek) {
   return Number(row.total || 0);
 }
 
-function getTopUsers(limit = 10) {
-  return db.prepare(`
-    SELECT
-      user_id,
-      COALESCE(NULLIF(display_name, ''), NULLIF(username, ''), user_id) AS display_name,
-      COALESCE(SUM(conteo), 0) AS total
-    FROM tiradas
-    GROUP BY user_id
-    ORDER BY total DESC
-    LIMIT ?
-  `).all(limit);
-}
-
-function getTopUsersMonth(year, month, limit = 10) {
-  return db.prepare(`
-    SELECT
-      user_id,
-      COALESCE(NULLIF(display_name, ''), NULLIF(username, ''), user_id) AS display_name,
-      COALESCE(SUM(conteo), 0) AS total
-    FROM tiradas
-    WHERE anio = ? AND mes = ?
-    GROUP BY user_id
-    ORDER BY total DESC
-    LIMIT ?
-  `).all(year, month, limit);
-}
-
-function getTopUsersWeek(isoYear, isoWeek, limit = 10) {
-  return db.prepare(`
-    SELECT
-      user_id,
-      COALESCE(NULLIF(display_name, ''), NULLIF(username, ''), user_id) AS display_name,
-      COALESCE(SUM(conteo), 0) AS total
-    FROM tiradas
-    WHERE COALESCE(anio_semana_iso, anio) = ? AND semana_iso = ?
-    GROUP BY user_id
-    ORDER BY total DESC
-    LIMIT ?
-  `).all(isoYear, isoWeek, limit);
-}
-
 function savePanelMessage(channelId, messageId) {
   db.prepare(`
     INSERT INTO panel_messages(channel_id, message_id)
@@ -212,15 +160,13 @@ function getDbPath() {
 
 module.exports = {
   insertTirada,
+  getLastTiradaByUser,
   getTotalGeneral,
   getTotalByUser,
   getTotalByUserMonth,
   getTotalByUserWeek,
   getTotalMonth,
   getTotalWeek,
-  getTopUsers,
-  getTopUsersMonth,
-  getTopUsersWeek,
   savePanelMessage,
   getPanelMessage,
   getDbPath
