@@ -184,13 +184,6 @@ function buildPanelRows() {
             emoji: "📊"
           }
         )
-    ),
-
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("tirada_admin_open_user_select")
-        .setLabel("Jefatura: consultar usuario")
-        .setStyle(ButtonStyle.Secondary)
     )
   ];
 }
@@ -206,6 +199,7 @@ function buildPanelContent() {
     `Pulsa **+1 tirada** para sumar **${META_PER_TIRADA} de meta** a tu contador.`,
     "La **siguiente tirada** se actualiza aquí automáticamente para que todos la vean.",
     "Usa **Ver mis tiradas...** para consultar tus tiradas en privado.",
+    "Jefatura puede consultar a otros con **/tiradas_usuario**.",
     "",
     buildPanelNextTiradaText(),
     "",
