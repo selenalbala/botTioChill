@@ -128,7 +128,7 @@ function buildPanelRows() {
             label: "Resumen",
             description: "Semana, mes, total y siguiente tirada",
             value: "resumen",
-            emoji: "🎲"
+            emoji: "📌"
           },
           {
             label: "Semana actual",
@@ -147,12 +147,6 @@ function buildPanelRows() {
             description: "Todas tus tiradas registradas",
             value: "total",
             emoji: "📊"
-          },
-          {
-            label: "Siguiente tirada",
-            description: "Cuánto queda para poder tirar otra vez",
-            value: "siguiente",
-            emoji: "⏱️"
           }
         )
     )
@@ -165,10 +159,11 @@ function buildPanelContent() {
   const totalSemana = db.getTotalWeek(period.isoYear, period.isoWeek);
 
   return [
-    "🎲 **Panel de tiradas**",
+    "🧪 **Panel de meta**",
     "",
-    `Pulsa **+1 tirada** para sumar una tirada a tu contador. Cada tirada cuenta como **${META_PER_TIRADA} de meta**.`,
-    "Usa **Ver mis tiradas...** para consultar tus tiradas en privado y ver cuándo puedes hacer la siguiente.",
+    `Pulsa **+1 tirada** para sumar **${META_PER_TIRADA} de meta** a tu contador.`,
+    "Después de pulsar **+1 tirada**, el bot te dirá automáticamente a qué hora puedes hacer la siguiente.",
+    "Usa **Ver mis tiradas...** para consultar tus tiradas en privado.",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     formatTiradaMetaLine("📅 **Total semanal**", totalSemana),
@@ -191,7 +186,7 @@ async function findPanelMessage(channel) {
     if (message.author?.id !== client.user?.id) return false;
 
     const content = String(message.content || "");
-    return content.includes("Panel de tiradas") || content.includes("Panel de meta de la banda");
+    return content.includes("Panel de meta") || content.includes("Panel de tiradas") || content.includes("Panel de meta de la banda");
   }) || null;
 }
 
@@ -310,7 +305,7 @@ function buildUserStatsText(user) {
   const mensual = db.getTotalByUserMonth(user.id, period.year, period.month);
 
   return [
-    `🎲 **Tiradas de ${user}**`,
+    `🧪 **Tiradas de ${user}**`,
     "",
     `📅 Semana actual: **${formatNumber(semanal)}** tirada(s) · **${formatMeta(semanal)} de meta**`,
     `🗓️ Mes actual: **${formatNumber(mensual)}** tirada(s) · **${formatMeta(mensual)} de meta**`,
@@ -353,9 +348,6 @@ function buildUserStatsOptionText(user, option) {
     ].join("\n");
   }
 
-  if (option === "siguiente") {
-    return buildNextTiradaText(user.id);
-  }
 
   return buildUserStatsText(user);
 }
@@ -403,7 +395,7 @@ client.once(Events.ClientReady, async () => {
 
   try {
     await refreshPanel();
-    console.log("Panel de tiradas actualizado.");
+    console.log("Panel de meta actualizado.");
   } catch (error) {
     console.error("No se pudo actualizar el panel:", error.message);
   }
