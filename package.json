@@ -1,7 +1,7 @@
 {
   "name": "bot-tiradas",
   "version": "2.0.0",
-  "description": "Bot de Discord para contar tiradas por usuario con boton +1 tirada y menu de consulta",
+  "description": "Bot de Discord para contar tiradas por usuario con un unico boton +1 tirada",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

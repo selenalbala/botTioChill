@@ -6,6 +6,7 @@ const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");
 
+// 1) Crear tablas primero, SIN índices que puedan fallar si la BD ya existía antigua.
 db.exec(`
 CREATE TABLE IF NOT EXISTS tiradas (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,21 +29,42 @@ CREATE TABLE IF NOT EXISTS panel_messages (
   channel_id TEXT PRIMARY KEY,
   message_id TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_tiradas_user ON tiradas(user_id);
-CREATE INDEX IF NOT EXISTS idx_tiradas_month ON tiradas(anio, mes);
-CREATE INDEX IF NOT EXISTS idx_tiradas_week ON tiradas(anio_semana_iso, semana_iso);
 `);
 
-/*
-  Si tu BD venía de la versión anterior, puede que no tenga anio_semana_iso.
-  Esto lo añade sin borrar datos.
-*/
+// 2) Migración para bases antiguas: añade columnas que falten sin borrar datos.
 const columns = db.prepare("PRAGMA table_info(tiradas)").all().map(col => col.name);
+
 if (!columns.includes("anio_semana_iso")) {
   db.exec("ALTER TABLE tiradas ADD COLUMN anio_semana_iso INTEGER");
   db.exec("UPDATE tiradas SET anio_semana_iso = anio WHERE anio_semana_iso IS NULL");
 }
+
+if (!columns.includes("conteo")) {
+  db.exec("ALTER TABLE tiradas ADD COLUMN conteo INTEGER NOT NULL DEFAULT 1");
+}
+
+if (!columns.includes("guild_id")) {
+  db.exec("ALTER TABLE tiradas ADD COLUMN guild_id TEXT");
+}
+
+if (!columns.includes("channel_id")) {
+  db.exec("ALTER TABLE tiradas ADD COLUMN channel_id TEXT");
+}
+
+if (!columns.includes("username")) {
+  db.exec("ALTER TABLE tiradas ADD COLUMN username TEXT");
+}
+
+if (!columns.includes("display_name")) {
+  db.exec("ALTER TABLE tiradas ADD COLUMN display_name TEXT");
+}
+
+// 3) Ahora sí: crear índices cuando ya existen las columnas.
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_tiradas_user ON tiradas(user_id);
+CREATE INDEX IF NOT EXISTS idx_tiradas_month ON tiradas(anio, mes);
+CREATE INDEX IF NOT EXISTS idx_tiradas_week ON tiradas(anio_semana_iso, semana_iso);
+`);
 
 const insertStmt = db.prepare(`
 INSERT INTO tiradas (

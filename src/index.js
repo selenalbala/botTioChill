@@ -7,7 +7,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  StringSelectMenuBuilder,
   MessageFlags,
   PermissionFlagsBits
 } = require("discord.js");
@@ -31,38 +30,6 @@ function buildPanelRows() {
         .setCustomId("tirada_plus_one")
         .setLabel("+1 tirada")
         .setStyle(ButtonStyle.Primary)
-    ),
-
-    new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId("tirada_consulta_select")
-        .setPlaceholder("Ver mis tiradas...")
-        .addOptions(
-          {
-            label: "Resumen",
-            description: "Semana, mes y total histórico",
-            value: "resumen",
-            emoji: "🎲"
-          },
-          {
-            label: "Semana actual",
-            description: "Tus tiradas de esta semana",
-            value: "semana",
-            emoji: "📅"
-          },
-          {
-            label: "Mes actual",
-            description: "Tus tiradas de este mes",
-            value: "mes",
-            emoji: "🗓️"
-          },
-          {
-            label: "Total histórico",
-            description: "Todas tus tiradas registradas",
-            value: "total",
-            emoji: "📊"
-          }
-        )
     )
   ];
 }
@@ -89,7 +56,6 @@ function buildPanelContent() {
     "🎲 **Panel de tiradas**",
     "",
     "Pulsa **+1 tirada** para sumar una tirada a tu contador.",
-    "Usa **Ver mis tiradas...** para consultar tus estadísticas en privado.",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     `📅 **Esta semana:** ${totalSemana} tirada(s)`,
@@ -208,44 +174,6 @@ function buildUserStatsText(user) {
     `📊 Total histórico: **${total}**`
   ].join("\n");
 }
-function buildUserStatsOptionText(user, option) {
-  const period = getCurrentPeriod();
-
-  if (option === "semana") {
-    const semanal = db.getTotalByUserWeek(user.id, period.isoYear, period.isoWeek);
-    return `📅 ${user}, esta semana llevas **${semanal}** tirada(s).`;
-  }
-
-  if (option === "mes") {
-    const mensual = db.getTotalByUserMonth(user.id, period.year, period.month);
-    return `🗓️ ${user}, este mes llevas **${mensual}** tirada(s).`;
-  }
-
-  if (option === "total") {
-    const total = db.getTotalByUser(user.id);
-    return `📊 ${user}, tienes **${total}** tirada(s) en total.`;
-  }
-
-  return buildUserStatsText(user);
-}
-
-async function handleTiradaStatsSelect(interaction) {
-  if (interaction.channelId !== TARGET_CHANNEL_ID) {
-    await interaction.reply({
-      content: "Este menú solo funciona en el canal configurado para las tiradas.",
-      flags: MessageFlags.Ephemeral
-    });
-    return;
-  }
-
-  const option = interaction.values?.[0] || "resumen";
-
-  await interaction.reply({
-    content: buildUserStatsOptionText(interaction.user, option),
-    flags: MessageFlags.Ephemeral
-  });
-}
-
 
 function getPeriodLabel(period) {
   if (period === "semana") return "esta semana";
@@ -284,13 +212,6 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isButton()) {
       if (interaction.customId === "tirada_plus_one") {
         await handleTiradaButton(interaction);
-      }
-      return;
-    }
-
-    if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === "tirada_consulta_select") {
-        await handleTiradaStatsSelect(interaction);
       }
       return;
     }
