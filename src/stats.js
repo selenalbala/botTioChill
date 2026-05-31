@@ -1,14 +1,8 @@
-function getIsoWeek(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-}
+const { TIMEZONE } = require("./config");
 
-function buildTiradaRow(interaction, timeZone = "Europe/Madrid") {
-  const now = new Date();
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+function getLocalParts(date = new Date(), timeZone = TIMEZONE) {
   const formatter = new Intl.DateTimeFormat("sv-SE", {
     timeZone,
     year: "numeric",
@@ -16,21 +10,56 @@ function buildTiradaRow(interaction, timeZone = "Europe/Madrid") {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit"
+    second: "2-digit",
+    hour12: false
   });
 
-  const parts = formatter.formatToParts(now);
-  const get = type => parts.find(p => p.type === type)?.value ?? "";
+  const parts = formatter.formatToParts(date);
+  const get = type => parts.find(p => p.type === type)?.value ?? "0";
 
-  const fechaLocal = `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    hour: get("hour"),
+    minute: get("minute"),
+    second: get("second")
+  };
+}
+
+function getLocalDateText(date = new Date(), timeZone = TIMEZONE) {
+  const local = getLocalParts(date, timeZone);
+  return `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")} ${local.hour}:${local.minute}:${local.second}`;
+}
+
+function getIsoWeekFromParts(year, month, day) {
+  const d = new Date(Date.UTC(year, month - 1, day));
+  const dayNum = d.getUTCDay() || 7;
+
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((d - yearStart) / MS_PER_DAY) + 1) / 7);
+
+  return {
+    isoYear: d.getUTCFullYear(),
+    isoWeek: week
+  };
+}
+
+function buildTiradaRow(interaction) {
+  const now = new Date();
+  const local = getLocalParts(now, TIMEZONE);
+  const iso = getIsoWeekFromParts(local.year, local.month, local.day);
 
   return {
     timestamp_utc: now.toISOString(),
-    fecha_local: fechaLocal,
-    anio: Number(get("year")),
-    mes: Number(get("month")),
-    dia: Number(get("day")),
-    semana_iso: getIsoWeek(now),
+    fecha_local: getLocalDateText(now, TIMEZONE),
+    anio: local.year,
+    mes: local.month,
+    dia: local.day,
+    semana_iso: iso.isoWeek,
+    anio_semana_iso: iso.isoYear,
     guild_id: interaction.guildId,
     channel_id: interaction.channelId,
     user_id: interaction.user.id,
@@ -40,11 +69,23 @@ function buildTiradaRow(interaction, timeZone = "Europe/Madrid") {
   };
 }
 
-function sumRegistros(rows) {
-  return rows.reduce((acc, row) => acc + Number(row.conteo || 0), 0);
+function getCurrentPeriod() {
+  const now = new Date();
+  const local = getLocalParts(now, TIMEZONE);
+  const iso = getIsoWeekFromParts(local.year, local.month, local.day);
+
+  return {
+    year: local.year,
+    month: local.month,
+    isoYear: iso.isoYear,
+    isoWeek: iso.isoWeek
+  };
 }
 
 module.exports = {
+  getLocalParts,
+  getLocalDateText,
+  getIsoWeekFromParts,
   buildTiradaRow,
-  sumRegistros
+  getCurrentPeriod
 };

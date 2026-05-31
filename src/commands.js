@@ -1,67 +1,107 @@
 require("dotenv").config();
 
-const { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const {
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  PermissionFlagsBits
+} = require("discord.js");
 
 const commands = [
   new SlashCommandBuilder()
-    .setName("total")
-    .setDescription("Muestra el total general de tiradas"),
+    .setName("panel_tiradas")
+    .setDescription("Crea o actualiza el panel con el botón +1 tirada")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName("mis_tiradas")
+    .setDescription("Consulta tus tiradas de esta semana, este mes y el total"),
 
   new SlashCommandBuilder()
     .setName("tiradas_usuario")
-    .setDescription("Muestra las tiradas de un usuario")
+    .setDescription("Consulta las tiradas de un usuario")
     .addUserOption(option =>
-      option.setName("usuario").setDescription("Usuario").setRequired(true)
+      option
+        .setName("usuario")
+        .setDescription("Usuario a consultar")
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("total_tiradas")
+    .setDescription("Muestra las tiradas totales de la semana, mes y histórico"),
+
+  new SlashCommandBuilder()
+    .setName("top_tiradas")
+    .setDescription("Muestra el ranking de tiradas")
+    .addStringOption(option =>
+      option
+        .setName("periodo")
+        .setDescription("Periodo del ranking")
+        .setRequired(false)
+        .addChoices(
+          { name: "Semana actual", value: "semana" },
+          { name: "Mes actual", value: "mes" },
+          { name: "Histórico", value: "total" }
+        )
+    )
+    .addIntegerOption(option =>
+      option
+        .setName("limite")
+        .setDescription("Cantidad de usuarios a mostrar")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("tiradas_mes")
-    .setDescription("Muestra las tiradas de un mes")
+    .setDescription("Consulta tiradas de un mes concreto")
     .addIntegerOption(option =>
-      option.setName("anio").setDescription("Año").setRequired(true)
+      option
+        .setName("anio")
+        .setDescription("Año, por ejemplo 2026")
+        .setRequired(true)
     )
     .addIntegerOption(option =>
-      option.setName("mes").setDescription("Mes (1-12)").setRequired(true)
+      option
+        .setName("mes")
+        .setDescription("Mes del 1 al 12")
+        .setRequired(true)
+    )
+    .addUserOption(option =>
+      option
+        .setName("usuario")
+        .setDescription("Opcional: usuario concreto")
+        .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("tiradas_semana")
-    .setDescription("Muestra las tiradas de una semana ISO")
+    .setDescription("Consulta tiradas de una semana concreta")
     .addIntegerOption(option =>
-      option.setName("anio").setDescription("Año").setRequired(true)
+      option
+        .setName("anio")
+        .setDescription("Año ISO, por ejemplo 2026")
+        .setRequired(true)
     )
     .addIntegerOption(option =>
-      option.setName("semana").setDescription("Semana ISO").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("tiradas_rango")
-    .setDescription("Muestra las tiradas entre dos fechas")
-    .addStringOption(option =>
-      option.setName("desde").setDescription("YYYY-MM-DD").setRequired(true)
+      option
+        .setName("semana")
+        .setDescription("Semana ISO del 1 al 53")
+        .setRequired(true)
     )
-    .addStringOption(option =>
-      option.setName("hasta").setDescription("YYYY-MM-DD").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("top_tiradas")
-    .setDescription("Muestra el top de tiradas")
-    .addIntegerOption(option =>
-      option.setName("limite").setDescription("Cantidad de usuarios").setRequired(false)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("exportar_excel")
-    .setDescription("Genera un Excel con todas las tiradas"),
-
-  new SlashCommandBuilder()
-    .setName("informe_semana")
-    .setDescription("Envía manualmente el informe semanal al canal configurado")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addUserOption(option =>
+      option
+        .setName("usuario")
+        .setDescription("Opcional: usuario concreto")
+        .setRequired(false)
+    )
 ];
 
 async function registerCommands() {
+  if (!process.env.DISCORD_TOKEN || !process.env.CLIENT_ID || !process.env.GUILD_ID) {
+    throw new Error("Faltan DISCORD_TOKEN, CLIENT_ID o GUILD_ID en el .env.");
+  }
+
   const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
   await rest.put(
@@ -72,4 +112,7 @@ async function registerCommands() {
   console.log("Comandos registrados correctamente.");
 }
 
-registerCommands().catch(console.error);
+registerCommands().catch(error => {
+  console.error(error);
+  process.exit(1);
+});
